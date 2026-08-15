@@ -17,15 +17,22 @@
 //[CONFIG DEFAULT]: 1.0
 #define AMBIENT_BRIGHTNESS 1.0
 
-//minimum indirect diffuse multiplier for a weak-capture, low-pre-exposure view
+//indirect diffuse targets for the calibrated environment classes
 //[CONFIG TYPE]: float
-//[CONFIG DEFAULT]: 2.0
-#define INDIRECT_DIFFUSE_SCALE_MIN 1.8
+//[CONFIG DEFAULT]: 1.8
+#define INDIRECT_DIFFUSE_SCALE_BEACH 1.8
 
-//maximum indirect diffuse multiplier for either a strong capture or high pre-exposure
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 2.5
+#define INDIRECT_DIFFUSE_SCALE_GRASSLAND 2.5
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 2.5
+#define INDIRECT_DIFFUSE_SCALE_MANOR 2.0
+
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 3.0
-#define INDIRECT_DIFFUSE_SCALE_MAX 3.0
+#define INDIRECT_DIFFUSE_SCALE_CAVE 5.0
 
 //capture luminance range used to transition from the weak to strong multiplier
 //NOTE: these values need to be calibrated against the in-game debug visualization
@@ -37,17 +44,30 @@
 //[CONFIG DEFAULT]: 1.0
 #define INDIRECT_ENV_LUMINANCE_HIGH 8000
 
-//pre-exposure stop range used to distinguish bright outdoor views from dark views
+//pre-exposure range that moves a weak-capture bright scene toward the Manor target
 //[CONFIG TYPE]: float
-//[CONFIG DEFAULT]: -8.0
-#define INDIRECT_PREEXPOSURE_LOW_STOPS (-8.0)
+//[CONFIG DEFAULT]: -6.0
+#define INDIRECT_DARK_SCENE_LOW_STOPS (-6.0)
 
 //[CONFIG TYPE]: float
-//[CONFIG DEFAULT]: 8.0
-#define INDIRECT_PREEXPOSURE_HIGH_STOPS 8.0
+//[CONFIG DEFAULT]: -4.0
+#define INDIRECT_DARK_SCENE_HIGH_STOPS (-4.0)
+
+//The calibrated Manor measured about -3.5 stops and Mythril Mine about 0 stops.
+//This upper range therefore adds the extra cave-only diffuse boost.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: -2.5
+#define INDIRECT_CAVE_PREEXPOSURE_LOW_STOPS (-2.5)
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: -1.0
+#define INDIRECT_CAVE_PREEXPOSURE_HIGH_STOPS (-1.0)
 
 //(DEBUG) red = weak capture, green = strong capture, blue = pre-exposure
 // #define DEBUG_INDIRECT_ENV_LUMINANCE
+
+//(TEMP DEBUG) shows a 32-band pre-exposure meter across the top of the screen.
+// #define DEBUG_INDIRECT_PREEXPOSURE_METER
 
 //this controls the brightness of the final combined ambient + direct light that this shader ultimately returns
 //[CONFIG TYPE]: float
@@ -100,7 +120,7 @@
 //Lower Values: less contrast
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.0
-#define SSAO_POWER 1.0
+#define SSAO_POWER 1.5
 
 //controls how bright the AO term is in ambient light (use in tandem with SSAO_POWER)
 //NOTE: original game SSAO is much weaker than the SSGI AO, if your flipping back and fourth you'll need to readjust the values
@@ -108,7 +128,7 @@
 //Lower Values: darker
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.0
-#define SSAO_BRIGHTNESS 1.0
+#define SSAO_BRIGHTNESS 3.0
 
 //controls for a new SSGI solution, ground-truth visibility bitmask ambient occlusion
 // - intended to replace the games original SSAO
@@ -2160,13 +2180,15 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     float environmentReferenceLuminance = LuminanceRec709(max(environment.CubemapReference, 0.0f));
     float environmentStrength = smoothstep(INDIRECT_ENV_LUMINANCE_LOW, INDIRECT_ENV_LUMINANCE_HIGH, environmentReferenceLuminance);
     float preExposureStops = log2(max(View_PreExposure, 1.0e-6f));
-    float darkExposureStrength = smoothstep(INDIRECT_PREEXPOSURE_LOW_STOPS, INDIRECT_PREEXPOSURE_HIGH_STOPS, preExposureStops);
+    float darkSceneStrength = smoothstep(INDIRECT_DARK_SCENE_LOW_STOPS, INDIRECT_DARK_SCENE_HIGH_STOPS, preExposureStops);
+    float caveStrength = smoothstep(INDIRECT_CAVE_PREEXPOSURE_LOW_STOPS, INDIRECT_CAVE_PREEXPOSURE_HIGH_STOPS, preExposureStops);
 
-    //A strong capture selects the full boost for Grasslands. High pre-exposure
-    //independently selects it for caves; only a weak, low-pre-exposure environment
-    //such as the tested beach remains at the minimum boost.
-    float fullDiffuseStrength = max(environmentStrength, darkExposureStrength);
-    float adaptiveDiffuseScale = lerp(INDIRECT_DIFFUSE_SCALE_MIN, INDIRECT_DIFFUSE_SCALE_MAX, fullDiffuseStrength);
+    //Capture strength separates Beach from Grasslands. Pre-exposure then moves
+    //weak-capture dark interiors to the Manor target, with a second calibrated
+    //range reserved for the substantially darker Mythril Mine.
+    float brightSceneScale = lerp(INDIRECT_DIFFUSE_SCALE_BEACH, INDIRECT_DIFFUSE_SCALE_GRASSLAND, environmentStrength);
+    float nonCaveScale = lerp(brightSceneScale, INDIRECT_DIFFUSE_SCALE_MANOR, darkSceneStrength);
+    float adaptiveDiffuseScale = lerp(nonCaveScale, INDIRECT_DIFFUSE_SCALE_CAVE, caveStrength);
     diffuse *= adaptiveDiffuseScale;
 
     #if defined(CAMERA_AMBIENT_LIGHT)
@@ -2235,10 +2257,34 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     //this is also an attempt at giving users a potential solution for being able to configure image brightness if they are in HDR since there is no post process HDR variant (at the time of writing)
     finalColor *= AMBIENT_BRIGHTNESS;
 
+    #if defined(DEBUG_INDIRECT_PREEXPOSURE_METER)
+        //Keep the scene visible while replacing only its top strip with a
+        //threshold meter. Alternating brightness makes the half-stop bands easy
+        //to count: far left is -8 stops, screen center is 0, far right is +8.
+        if (vector_uvNormalized.y < 0.12f)
+        {
+            const float meterBandCount = 32.0f;
+            float meterBand = min(floor(saturate(vector_uvNormalized.x) * meterBandCount), meterBandCount - 1.0f);
+            float meterThresholdStops = lerp(
+                -8.0f,
+                8.0f,
+                (meterBand + 0.5f) / meterBandCount);
+            float thresholdPassed = step(meterThresholdStops, preExposureStops);
+            float bandBrightness = lerp(0.65f, 1.0f, fmod(meterBand, 2.0f));
+            float3 meterColor = lerp(
+                float3(bandBrightness, 0.0f, 0.0f),
+                float3(0.0f, bandBrightness, 0.0f),
+                thresholdPassed);
+
+            OutTextureColor[vector_uvInt] = float4(meterColor, 1.0f);
+            return;
+        }
+    #endif
+
     #if defined(DEBUG_INDIRECT_ENV_LUMINANCE)
         //Pre-exposure is encoded logarithmically so both small and large exposure
         //values remain visible. Compare the blue component of the beach and cave.
-        float3 debugEnvironmentColor = float3(1.0f - environmentStrength, environmentStrength, darkExposureStrength);
+        float3 debugEnvironmentColor = float3(1.0f - environmentStrength, environmentStrength, darkSceneStrength);
         OutTextureColor[vector_uvInt] = float4(debugEnvironmentColor, 1.0f);
         return;
     #endif

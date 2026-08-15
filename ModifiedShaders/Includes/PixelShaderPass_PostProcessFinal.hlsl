@@ -10,6 +10,41 @@
 //[NO CONFIG]
 //#define DEBUG_COLOR_CHART
 
+//(TEMP DEBUG) visualizes raw pre-tonemap HDR luminance on a logarithmic scale.
+//The top strip is the low-to-high color legend. Disable after calibration.
+// #define DEBUG_HDR_LUMINANCE
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: -8.0
+#define DEBUG_HDR_LUMINANCE_MIN_STOPS (-8.0)
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 16.0
+#define DEBUG_HDR_LUMINANCE_MAX_STOPS 16.0
+
+//|||||||||||||||||||||||||||||||||| CONFIGURATION - HIGHLIGHT ROLLOFF ||||||||||||||||||||||||||||||||||
+
+//Compresses only bright HDR values before tonemapping while preserving hue.
+//Useful for scenes where directly lit sky and water overwhelm shaded geometry.
+#define HIGHLIGHT_ROLLOFF
+
+//Linear luminance where compression begins. Values below this are unchanged.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.5
+//[CONFIG RANGE]: [0.01, 16]
+#define HIGHLIGHT_ROLLOFF_START 0.01
+
+//Compression strength. 0 disables compression; larger values produce a
+//stronger shoulder and reveal more detail in extreme highlights.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.75
+//[CONFIG RANGE]: [0, 4]
+#define HIGHLIGHT_ROLLOFF_STRENGTH 4
+
+//(TEMP DEBUG) left = preserved game grade, right = raw HDR into GT7.
+//This isolates highlight damage introduced by the LUT/inverse reconstruction.
+// #define DEBUG_HIGHLIGHT_GRADE_SPLIT
+
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - VIGNETTE ||||||||||||||||||||||||||||||||||
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - VIGNETTE ||||||||||||||||||||||||||||||||||
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - VIGNETTE ||||||||||||||||||||||||||||||||||
@@ -858,6 +893,23 @@ float3 AdjustImage(float3 inputColor)
     return color;
 }
 
+float3 ApplyHighlightRolloff(float3 color)
+{
+	float luminance = max(LuminanceRec709(max(color, 0.0f.xxx)), 1.0e-6f);
+	float start = max(HIGHLIGHT_ROLLOFF_START, 0.0f);
+	float strength = max(HIGHLIGHT_ROLLOFF_STRENGTH, 0.0f);
+	float excess = max(luminance - start, 0.0f);
+
+	//ln(1 + strength * excess) / strength is continuous at the knee and
+	//approaches the identity function as strength approaches zero.
+	float compressedExcess = strength > 1.0e-4f
+		? log2(1.0f + strength * excess) * (0.69314718056f / strength)
+		: excess;
+	float compressedLuminance = min(luminance, start + compressedExcess);
+
+	return color * (compressedLuminance / luminance);
+}
+
 //||||||||||||||||||||||||||||||| TONEMAPPING / COLOR GRADING (ORIGINAL GAME) |||||||||||||||||||||||||||||||
 //||||||||||||||||||||||||||||||| TONEMAPPING / COLOR GRADING (ORIGINAL GAME) |||||||||||||||||||||||||||||||
 //||||||||||||||||||||||||||||||| TONEMAPPING / COLOR GRADING (ORIGINAL GAME) |||||||||||||||||||||||||||||||
@@ -1096,6 +1148,16 @@ float3 GrangerRainbow(float2 uv)
 	return rainbow;
 }
 
+float3 DebugHDRLuminanceColor(float normalizedStops)
+{
+	//Compact blue -> cyan -> green -> yellow -> red heatmap.
+	float t = saturate(normalizedStops);
+	return saturate(float3(
+		1.5f - abs(4.0f * t - 3.0f),
+		1.5f - abs(4.0f * t - 2.0f),
+		1.5f - abs(4.0f * t - 1.0f)));
+}
+
 //|||||||||||||||||||||||||||||||||||||||||||| MAIN ||||||||||||||||||||||||||||||||||||||||||||
 //|||||||||||||||||||||||||||||||||||||||||||| MAIN ||||||||||||||||||||||||||||||||||||||||||||
 //|||||||||||||||||||||||||||||||||||||||||||| MAIN ||||||||||||||||||||||||||||||||||||||||||||
@@ -1111,6 +1173,21 @@ PixelOutput main(PixelInput input)
     float2 compositeUV = MakeCenteredCompositeUV(destinationUV);
 
     float3 sceneColor = min(ColorTexture.SampleLevel(View_SharedBilinearClampedSampler, colorUV, 0.0f).rgb, 64512.0f.xxx);
+
+	#if defined(DEBUG_HDR_LUMINANCE)
+		//Inspect the raw scene buffer. Using log2 luminance keeps both shaded and
+		//extremely bright pixels visible on one scale. The top strip replaces the
+		//scene with a horizontal legend covering the configured stop range.
+		float rawLuminance = max(LuminanceRec709(max(sceneColor, 0.0f.xxx)), exp2(DEBUG_HDR_LUMINANCE_MIN_STOPS));
+		float luminanceStops = log2(rawLuminance);
+		float normalizedStops = saturate(
+			(luminanceStops - DEBUG_HDR_LUMINANCE_MIN_STOPS) /
+			max(DEBUG_HDR_LUMINANCE_MAX_STOPS - DEBUG_HDR_LUMINANCE_MIN_STOPS, 1.0e-4f));
+		float legendOrScene = destinationUV.y < 0.08f ? destinationUV.x : normalizedStops;
+		float3 debugLinear = DebugHDRLuminanceColor(legendOrScene);
+		output.Color = float4(LinearToSRGB(debugLinear), 0.0f);
+		return output;
+	#endif
     
 	#if defined(VIGNETTE_ENABLED)
 		sceneColor *= ComputeVignette(input.VignetteRayContext.xyz);
@@ -1127,6 +1204,10 @@ PixelOutput main(PixelInput input)
 
 	//apply any custom artistic adjustments before we tonemap
 	sceneColor = AdjustImage(sceneColor);
+
+	#if defined(HIGHLIGHT_ROLLOFF)
+		sceneColor = ApplyHighlightRolloff(sceneColor);
+	#endif
 
 	#if defined(DEBUG_COLOR_CHART)
 		sceneColor = GrangerRainbow(destinationUV);
@@ -1147,6 +1228,10 @@ PixelOutput main(PixelInput input)
 		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
 			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
 			tonemapOutput = ApplyTonemap_GranTurismo7(tonemapOutput);
+			#if defined(DEBUG_HIGHLIGHT_GRADE_SPLIT)
+				float3 rawTonemapOutput = ApplyTonemap_GranTurismo7(sceneColor);
+				tonemapOutput = destinationUV.x < 0.5f ? tonemapOutput : rawTonemapOutput;
+			#endif
 		#else
 			float3 tonemapOutput = ApplyTonemap_GranTurismo7(sceneColor);
 		#endif
