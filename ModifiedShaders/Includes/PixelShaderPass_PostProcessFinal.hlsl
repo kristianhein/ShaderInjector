@@ -32,7 +32,7 @@
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.5
 //[CONFIG RANGE]: [0.01, 16]
-#define HIGHLIGHT_ROLLOFF_START 0.01
+#define HIGHLIGHT_ROLLOFF_START 0.1
 
 //Compression strength. 0 disables compression; larger values produce a
 //stronger shoulder and reveal more detail in extreme highlights.
@@ -43,7 +43,14 @@
 
 //(TEMP DEBUG) left = preserved game grade, right = raw HDR into GT7.
 //This isolates highlight damage introduced by the LUT/inverse reconstruction.
-// #define DEBUG_HIGHLIGHT_GRADE_SPLIT
+#define DEBUG_HIGHLIGHT_GRADE_SPLIT
+
+//Uses compressed raw HDR directly through GT7 for the entire screen, bypassing
+//the game's baked color grade and inverse-ACES reconstruction. This overrides
+//DEBUG_HIGHLIGHT_GRADE_SPLIT when enabled.
+//[CONFIG TYPE]: bool
+//[CONFIG DEFAULT]: false
+#define HIGHLIGHT_RAW_GT7_FULL_SCREEN
 
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - VIGNETTE ||||||||||||||||||||||||||||||||||
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - VIGNETTE ||||||||||||||||||||||||||||||||||
@@ -1228,7 +1235,9 @@ PixelOutput main(PixelInput input)
 		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
 			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
 			tonemapOutput = ApplyTonemap_GranTurismo7(tonemapOutput);
-			#if defined(DEBUG_HIGHLIGHT_GRADE_SPLIT)
+			#if defined(HIGHLIGHT_RAW_GT7_FULL_SCREEN)
+				tonemapOutput = ApplyTonemap_GranTurismo7(sceneColor);
+			#elif defined(DEBUG_HIGHLIGHT_GRADE_SPLIT)
 				float3 rawTonemapOutput = ApplyTonemap_GranTurismo7(sceneColor);
 				tonemapOutput = destinationUV.x < 0.5f ? tonemapOutput : rawTonemapOutput;
 			#endif
