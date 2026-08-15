@@ -17,6 +17,38 @@
 //[CONFIG DEFAULT]: 1.0
 #define AMBIENT_BRIGHTNESS 1.0
 
+//minimum indirect diffuse multiplier for a weak-capture, low-pre-exposure view
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 2.0
+#define INDIRECT_DIFFUSE_SCALE_MIN 1.8
+
+//maximum indirect diffuse multiplier for either a strong capture or high pre-exposure
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 3.0
+#define INDIRECT_DIFFUSE_SCALE_MAX 3.0
+
+//capture luminance range used to transition from the weak to strong multiplier
+//NOTE: these values need to be calibrated against the in-game debug visualization
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.1
+#define INDIRECT_ENV_LUMINANCE_LOW 4000
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 1.0
+#define INDIRECT_ENV_LUMINANCE_HIGH 8000
+
+//pre-exposure stop range used to distinguish bright outdoor views from dark views
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: -8.0
+#define INDIRECT_PREEXPOSURE_LOW_STOPS (-8.0)
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 8.0
+#define INDIRECT_PREEXPOSURE_HIGH_STOPS 8.0
+
+//(DEBUG) red = weak capture, green = strong capture, blue = pre-exposure
+// #define DEBUG_INDIRECT_ENV_LUMINANCE
+
 //this controls the brightness of the final combined ambient + direct light that this shader ultimately returns
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.0
@@ -690,6 +722,7 @@ struct EnvironmentSamples
     float3 CubemapReflectionRough;
     float3 CubemapIrradiance;
     float3 CubemapReflection;
+    float3 CubemapReference;
 };
 
 //|||||||||||||||||||||||||||||||||| SPACE CONVERSIONS ||||||||||||||||||||||||||||||||||
@@ -1056,6 +1089,7 @@ EnvironmentSamples SampleFallback(float3 vector_reflectionDirection, float3 vect
     float3 cubemapUnknownSample = View_EnvironmentLightFallbackTexture.SampleLevel(View_SharedPointWrappedSampler, float3(1.0, 0.0, 0.0), 7.0).rgb;
 
     environment.CubemapIrradiance = scale * lerp(cubemapIrradiance, cubemapUnknownSample, axisBlend);
+    environment.CubemapReference = scale * cubemapUnknownSample;
 
 	return environment;
 }
@@ -1144,6 +1178,7 @@ EnvironmentSamples SampleProbeEnvironment(ProbeSelection selection, float3 vecto
 
     float3 logCubemapIrradianceRough = 0.0;
     float3 logCubemapIrradiance = 0.0;
+    float3 logCubemapReference = 0.0;
 
     float totalWeight = 0.0;
 
@@ -1172,6 +1207,7 @@ EnvironmentSamples SampleProbeEnvironment(ProbeSelection selection, float3 vecto
         logCubemapReflectionRough += weight * log2(max(cubemapReflectionRough, 1.0e-9));
         logCubemapIrradiance += weight * log2(max(lerp(cubemapIrradiance, cubemapUnknownSample, axisBlend), 1.0e-9));
         logCubemapReflection += weight * log2(max(cubemapReflection, 1.0e-9));
+        logCubemapReference += weight * log2(max(cubemapUnknownSample, 1.0e-9));
         totalWeight += weight;
     }
 
@@ -1182,6 +1218,7 @@ EnvironmentSamples SampleProbeEnvironment(ProbeSelection selection, float3 vecto
         environmentSamples.CubemapReflectionRough = exp2(logCubemapReflectionRough * inverseTotalWeight);
         environmentSamples.CubemapIrradiance = exp2(logCubemapIrradiance * inverseTotalWeight);
         environmentSamples.CubemapReflection = exp2(logCubemapReflection * inverseTotalWeight);
+        environmentSamples.CubemapReference = exp2(logCubemapReference * inverseTotalWeight);
     }
     else
     {
@@ -1189,6 +1226,7 @@ EnvironmentSamples SampleProbeEnvironment(ProbeSelection selection, float3 vecto
         environmentSamples.CubemapReflectionRough = logCubemapReflectionRough;
         environmentSamples.CubemapIrradiance = logCubemapIrradiance;
         environmentSamples.CubemapReflection = logCubemapReflection;
+        environmentSamples.CubemapReference = logCubemapReference;
     }
 
     return environmentSamples;
@@ -2116,6 +2154,21 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     float3 specular = ambiguousA + globalIlluminationRadiance;
     float3 diffuse = ambiguousB + globalIlluminationIrradiance;
 
+    //The fixed-direction high-mip sample already used by the capture blending path
+    //serves as a probe-level environment-brightness reference. It is independent of
+    //surface normals, materials, scene color, and projected direct-light shadows.
+    float environmentReferenceLuminance = LuminanceRec709(max(environment.CubemapReference, 0.0f));
+    float environmentStrength = smoothstep(INDIRECT_ENV_LUMINANCE_LOW, INDIRECT_ENV_LUMINANCE_HIGH, environmentReferenceLuminance);
+    float preExposureStops = log2(max(View_PreExposure, 1.0e-6f));
+    float darkExposureStrength = smoothstep(INDIRECT_PREEXPOSURE_LOW_STOPS, INDIRECT_PREEXPOSURE_HIGH_STOPS, preExposureStops);
+
+    //A strong capture selects the full boost for Grasslands. High pre-exposure
+    //independently selects it for caves; only a weak, low-pre-exposure environment
+    //such as the tested beach remains at the minimum boost.
+    float fullDiffuseStrength = max(environmentStrength, darkExposureStrength);
+    float adaptiveDiffuseScale = lerp(INDIRECT_DIFFUSE_SCALE_MIN, INDIRECT_DIFFUSE_SCALE_MAX, fullDiffuseStrength);
+    diffuse *= adaptiveDiffuseScale;
+
     #if defined(CAMERA_AMBIENT_LIGHT)
         float distanceToCamera = distance(View_WorldCameraOrigin, worldPosition);
         float falloff = rcp(distanceToCamera);
@@ -2181,6 +2234,14 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     //artistic adjustment users can do for those complaining about darkness... (little do they know most of them are too used to seeing the games inaccurate bright light leaks in shadows)
     //this is also an attempt at giving users a potential solution for being able to configure image brightness if they are in HDR since there is no post process HDR variant (at the time of writing)
     finalColor *= AMBIENT_BRIGHTNESS;
+
+    #if defined(DEBUG_INDIRECT_ENV_LUMINANCE)
+        //Pre-exposure is encoded logarithmically so both small and large exposure
+        //values remain visible. Compare the blue component of the beach and cave.
+        float3 debugEnvironmentColor = float3(1.0f - environmentStrength, environmentStrength, darkExposureStrength);
+        OutTextureColor[vector_uvInt] = float4(debugEnvironmentColor, 1.0f);
+        return;
+    #endif
 
     OutTextureColor[vector_uvInt] += finalColor;
 	//OutTextureColor[vector_uvInt] = finalColor;
