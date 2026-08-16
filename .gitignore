@@ -434,11 +434,10 @@ PDFs/
 # Cross-version discovery test suite (CMake out-of-tree build)
 Tests/CrossVersionDiscovery/build/
 
-# Track only shared shader includes from this working directory.
+# Track only shader include sources from this working directory.
 /*
 !/.gitignore
 !/ModifiedShaders/
 /ModifiedShaders/*
-/ModifiedShaders/GameVersion*/
 !/ModifiedShaders/Includes/
 !/ModifiedShaders/Includes/**
