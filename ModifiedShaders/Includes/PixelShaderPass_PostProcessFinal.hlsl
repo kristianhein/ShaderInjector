@@ -24,8 +24,8 @@
 
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - HIGHLIGHT ROLLOFF ||||||||||||||||||||||||||||||||||
 
-//Compresses only bright HDR values before tonemapping while preserving hue.
-//Useful for scenes where directly lit sky and water overwhelm shaded geometry.
+//Compresses bright HDR values before tonemapping. Strongly compressed highlights
+//can also be desaturated to avoid unnaturally vivid skies and vegetation.
 #define HIGHLIGHT_ROLLOFF
 
 //Linear luminance where compression begins. Values below this are unchanged.
@@ -41,6 +41,14 @@
 //[CONFIG RANGE]: [0, 4]
 #define HIGHLIGHT_ROLLOFF_STRENGTH 4
 
+//Gradually compresses highlight chroma toward the darkest RGB channel. This
+//darkens vivid highlights instead of washing them toward equal-luminance grey.
+//The effect is weighted by compression, so uncompressed colors are unchanged.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.5
+//[CONFIG RANGE]: [0, 1]
+#define HIGHLIGHT_ROLLOFF_DESATURATION 0.8
+
 //(TEMP DEBUG) left = preserved game grade, right = raw HDR into GT7.
 //This isolates highlight damage introduced by the LUT/inverse reconstruction.
 #define DEBUG_HIGHLIGHT_GRADE_SPLIT
@@ -50,7 +58,7 @@
 //DEBUG_HIGHLIGHT_GRADE_SPLIT when enabled.
 //[CONFIG TYPE]: bool
 //[CONFIG DEFAULT]: false
-#define HIGHLIGHT_RAW_GT7_FULL_SCREEN
+// #define HIGHLIGHT_RAW_GT7_FULL_SCREEN
 
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - VIGNETTE ||||||||||||||||||||||||||||||||||
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - VIGNETTE ||||||||||||||||||||||||||||||||||
@@ -913,8 +921,15 @@ float3 ApplyHighlightRolloff(float3 color)
 		? log2(1.0f + strength * excess) * (0.69314718056f / strength)
 		: excess;
 	float compressedLuminance = min(luminance, start + compressedExcess);
+	float compressionScale = compressedLuminance / luminance;
+	float3 compressedColor = color * compressionScale;
 
-	return color * (compressedLuminance / luminance);
+	//Pull chroma toward the darkest channel instead of equal-luminance grey. This
+	//avoids lifting weak channels and produces a darker, grittier highlight grade.
+	float compressionAmount = saturate(1.0f - compressionScale);
+	float desaturationAmount = compressionAmount * saturate(HIGHLIGHT_ROLLOFF_DESATURATION);
+	float darkestChannel = min(compressedColor.r, min(compressedColor.g, compressedColor.b));
+	return lerp(compressedColor, darkestChannel.xxx, desaturationAmount);
 }
 
 //||||||||||||||||||||||||||||||| TONEMAPPING / COLOR GRADING (ORIGINAL GAME) |||||||||||||||||||||||||||||||
