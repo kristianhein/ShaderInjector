@@ -47,7 +47,18 @@
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.5
 //[CONFIG RANGE]: [0, 1]
-#define HIGHLIGHT_ROLLOFF_DESATURATION 0.8
+#define HIGHLIGHT_ROLLOFF_DESATURATION 0.5
+
+//Pre-exposure range used to restrict highlight rolloff to bright outdoor scenes.
+//Rolloff is fully active at or below the first value and fully disabled at or
+//above the second, preserving practical lights in dark interiors and caves.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: -6.0
+#define HIGHLIGHT_ROLLOFF_OUTDOOR_FULL_STOPS (-6.0)
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: -4.0
+#define HIGHLIGHT_ROLLOFF_OUTDOOR_OFF_STOPS (-4.0)
 
 //(TEMP DEBUG) left = preserved game grade, right = raw HDR into GT7.
 //This isolates highlight damage introduced by the LUT/inverse reconstruction.
@@ -58,7 +69,7 @@
 //DEBUG_HIGHLIGHT_GRADE_SPLIT when enabled.
 //[CONFIG TYPE]: bool
 //[CONFIG DEFAULT]: false
-// #define HIGHLIGHT_RAW_GT7_FULL_SCREEN
+#define HIGHLIGHT_RAW_GT7_FULL_SCREEN
 
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - VIGNETTE ||||||||||||||||||||||||||||||||||
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - VIGNETTE ||||||||||||||||||||||||||||||||||
@@ -1228,7 +1239,12 @@ PixelOutput main(PixelInput input)
 	sceneColor = AdjustImage(sceneColor);
 
 	#if defined(HIGHLIGHT_ROLLOFF)
-		sceneColor = ApplyHighlightRolloff(sceneColor);
+		float preExposureStops = log2(max(View_PreExposure, 1.0e-6f));
+		float outdoorRolloffStrength = 1.0f - smoothstep(
+			HIGHLIGHT_ROLLOFF_OUTDOOR_FULL_STOPS,
+			HIGHLIGHT_ROLLOFF_OUTDOOR_OFF_STOPS,
+			preExposureStops);
+		sceneColor = lerp(sceneColor, ApplyHighlightRolloff(sceneColor), outdoorRolloffStrength);
 	#endif
 
 	#if defined(DEBUG_COLOR_CHART)

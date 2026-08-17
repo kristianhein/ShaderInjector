@@ -197,7 +197,7 @@
 //this dramatically improves the lighting quality. adding bounce light from the sun, catching emissives or materials in the games that previously were not emitting light
 //this DOES impact performance quite a bit, needing to sample the color buffer in order to bounce light around
 //and also in its current state, there is no filtering so this can contribute to quite a bit noise in the final image
-#define SSGI_BOUNCE_LIGHT
+// #define SSGI_BOUNCE_LIGHT
 
 //shade half of the expensive SSGI rays each frame and reconstruct the missing half from the two computed neighbors in the same 2x2 pixel quad
 //NOTE: checkerboard rendering is a definite WIN for performance especially at high resolutions, I think it's wise to leave this on even at the expense of quality
