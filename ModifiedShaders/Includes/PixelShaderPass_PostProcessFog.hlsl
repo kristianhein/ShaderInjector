@@ -21,7 +21,7 @@
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.0
-#define FOG_DENSITY_FAR_FIELD_MULTIPLIER 2.0
+#define FOG_DENSITY_FAR_FIELD_MULTIPLIER 1.0
 
 //||||||||||||||||||||||||||||||| CONFIGURATION - PROCEDUAL SKY (EXPERIMENTAL!!!) |||||||||||||||||||||||||||||||
 //||||||||||||||||||||||||||||||| CONFIGURATION - PROCEDUAL SKY (EXPERIMENTAL!!!) |||||||||||||||||||||||||||||||

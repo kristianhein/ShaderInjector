@@ -32,14 +32,14 @@
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.5
 //[CONFIG RANGE]: [0.01, 16]
-#define HIGHLIGHT_ROLLOFF_START 0.01
+#define HIGHLIGHT_ROLLOFF_START 0.3
 
 //Compression strength. 0 disables compression; larger values produce a
 //stronger shoulder and reveal more detail in extreme highlights.
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.75
 //[CONFIG RANGE]: [0, 4]
-#define HIGHLIGHT_ROLLOFF_STRENGTH 8
+#define HIGHLIGHT_ROLLOFF_STRENGTH 3.0
 
 //Gradually compresses highlight chroma toward the darkest RGB channel. This
 //darkens vivid highlights instead of washing them toward equal-luminance grey.
@@ -47,7 +47,7 @@
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.5
 //[CONFIG RANGE]: [0, 1]
-#define HIGHLIGHT_ROLLOFF_DESATURATION 0.6
+#define HIGHLIGHT_ROLLOFF_DESATURATION 0.7
 
 //Pre-exposure band where highlight rolloff is active. On the -16 to 0 debug
 //meter, 8 green bands is about -12 stops and 20 bands is about -6 stops.
@@ -67,6 +67,14 @@
 //[CONFIG DEFAULT]: 0.5
 //[CONFIG RANGE]: [0, 4]
 #define HIGHLIGHT_ROLLOFF_SCENE_FADE_STOPS 3
+
+//Exposure compensation applied before highlight rolloff in the nuclear scene
+//band. Scaling the whole HDR signal preserves relative contrast before the
+//remaining extreme highlights enter the compression shoulder.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: -1.5
+//[CONFIG RANGE]: [-4, 0]
+#define NUCLEAR_SCENE_EXPOSURE_EV (-4)
 
 //(TEMP DEBUG) left = preserved game grade, right = raw HDR into GT7.
 //This isolates highlight damage introduced by the LUT/inverse reconstruction.
@@ -109,6 +117,20 @@
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 2
 #define BLOOM_ADDITIVE_INTENSITY 2.0
+
+//Fraction of the game's bloom retained in the calibrated nuclear scene band.
+//Lower values remove more of the broad glare veil without disabling bloom elsewhere.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.3
+//[CONFIG RANGE]: [0, 1]
+#define BLOOM_NUCLEAR_SCENE_RETENTION 0.2
+
+//Bloom-specific transition width around the nuclear scene band. Keep this
+//narrow so the calibrated beach and grassland ranges retain normal bloom.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.5
+//[CONFIG RANGE]: [0, 4]
+#define BLOOM_NUCLEAR_SCENE_FADE_STOPS 0.5
 
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - SHARPEN ||||||||||||||||||||||||||||||||||
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - SHARPEN ||||||||||||||||||||||||||||||||||
@@ -768,6 +790,21 @@ float2 MakeCenteredCompositeUV(float2 destinationUV)
 //NOTE: for the most part this is just the final composition stage of the bloom
 //there are a number of draw passes prior where bloom is being calculated via downsample/upsample blurring
 
+float CalculateNuclearSceneStrength(float fadeStops)
+{
+	float preExposureStops = log2(max(View_PreExposure, 1.0e-6f));
+	float sceneFadeStops = max(fadeStops, 1.0e-4f);
+	float enterNuclearRange = smoothstep(
+		HIGHLIGHT_ROLLOFF_SCENE_MIN_STOPS - sceneFadeStops,
+		HIGHLIGHT_ROLLOFF_SCENE_MIN_STOPS,
+		preExposureStops);
+	float leaveNuclearRange = 1.0f - smoothstep(
+		HIGHLIGHT_ROLLOFF_SCENE_MAX_STOPS,
+		HIGHLIGHT_ROLLOFF_SCENE_MAX_STOPS + sceneFadeStops,
+		preExposureStops);
+	return enterNuclearRange * leaveNuclearRange;
+}
+
 float3 ApplyGlare(float3 sceneColor, float2 correctedDestinationUV)
 {
     float2 glareUV = DestinationUVToGlareTextureUV(correctedDestinationUV);
@@ -789,21 +826,23 @@ float3 ApplyGlare(float3 sceneColor, float2 correctedDestinationUV)
 		//more physically-based style bloom, energy conserving and non-additive
 		//NOTE: the 15 is arbitrary, boosting the glare to be roughly the same brightness as the original exposure
 		float3 bloomedSceneColor = lerp(sceneColor, glareColor * 15, BLOOM_PHYSICAL_INTENSITY);
-		return bloomedSceneColor;
 	#elif defined(BLOOM_ADDITIVE)
 		//additive bloom, simple
 		float3 bloomedSceneColor = sceneColor + glareColor * BLOOM_ADDITIVE_INTENSITY;
-		return bloomedSceneColor;
 	#else
 		//original game
 		#if defined(GAME_VERSION_1_0_0_3)
 			// Matches the 1.0.0.3 DXIL: the last term is GlareTexture.a,
 			// not GlareContext.y.
-			return sceneColor + GlareContext.x * (glareColor - sceneColor + glareSample.a * sceneColor);
+			float3 bloomedSceneColor = sceneColor + GlareContext.x * (glareColor - sceneColor + glareSample.a * sceneColor);
 		#else
-			return sceneColor + GlareContext.x * (glareColor - sceneColor + GlareContext.y * sceneColor);
+			float3 bloomedSceneColor = sceneColor + GlareContext.x * (glareColor - sceneColor + GlareContext.y * sceneColor);
 		#endif
 	#endif
+
+	float nuclearSceneStrength = CalculateNuclearSceneStrength(BLOOM_NUCLEAR_SCENE_FADE_STOPS);
+	float bloomRetention = lerp(1.0f, saturate(BLOOM_NUCLEAR_SCENE_RETENTION), nuclearSceneStrength);
+	return lerp(sceneColor, bloomedSceneColor, bloomRetention);
 }
 
 //||||||||||||||||||||||||||||||| VIGNETTE |||||||||||||||||||||||||||||||
@@ -1247,17 +1286,8 @@ PixelOutput main(PixelInput input)
 	sceneColor = AdjustImage(sceneColor);
 
 	#if defined(HIGHLIGHT_ROLLOFF)
-		float preExposureStops = log2(max(View_PreExposure, 1.0e-6f));
-		float sceneFadeStops = max(HIGHLIGHT_ROLLOFF_SCENE_FADE_STOPS, 1.0e-4f);
-		float enterRolloffRange = smoothstep(
-			HIGHLIGHT_ROLLOFF_SCENE_MIN_STOPS - sceneFadeStops,
-			HIGHLIGHT_ROLLOFF_SCENE_MIN_STOPS,
-			preExposureStops);
-		float leaveRolloffRange = 1.0f - smoothstep(
-			HIGHLIGHT_ROLLOFF_SCENE_MAX_STOPS,
-			HIGHLIGHT_ROLLOFF_SCENE_MAX_STOPS + sceneFadeStops,
-			preExposureStops);
-		float sceneRolloffStrength = enterRolloffRange * leaveRolloffRange;
+		float sceneRolloffStrength = CalculateNuclearSceneStrength(HIGHLIGHT_ROLLOFF_SCENE_FADE_STOPS);
+		sceneColor *= exp2(NUCLEAR_SCENE_EXPOSURE_EV * sceneRolloffStrength);
 		sceneColor = lerp(sceneColor, ApplyHighlightRolloff(sceneColor), sceneRolloffStrength);
 	#endif
 
