@@ -32,14 +32,14 @@
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.5
 //[CONFIG RANGE]: [0.01, 16]
-#define HIGHLIGHT_ROLLOFF_START 0.1
+#define HIGHLIGHT_ROLLOFF_START 0.01
 
 //Compression strength. 0 disables compression; larger values produce a
 //stronger shoulder and reveal more detail in extreme highlights.
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.75
 //[CONFIG RANGE]: [0, 4]
-#define HIGHLIGHT_ROLLOFF_STRENGTH 4
+#define HIGHLIGHT_ROLLOFF_STRENGTH 8
 
 //Gradually compresses highlight chroma toward the darkest RGB channel. This
 //darkens vivid highlights instead of washing them toward equal-luminance grey.
@@ -47,18 +47,26 @@
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.5
 //[CONFIG RANGE]: [0, 1]
-#define HIGHLIGHT_ROLLOFF_DESATURATION 0.5
+#define HIGHLIGHT_ROLLOFF_DESATURATION 0.6
 
-//Pre-exposure range used to restrict highlight rolloff to bright outdoor scenes.
-//Rolloff is fully active at or below the first value and fully disabled at or
-//above the second, preserving practical lights in dark interiors and caves.
+//Pre-exposure band where highlight rolloff is active. On the -16 to 0 debug
+//meter, 8 green bands is about -12 stops and 20 bands is about -6 stops.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: -12.0
+//[CONFIG RANGE]: [-16, 0]
+#define HIGHLIGHT_ROLLOFF_SCENE_MIN_STOPS (-12.0)
+
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: -6.0
-#define HIGHLIGHT_ROLLOFF_OUTDOOR_FULL_STOPS (-6.0)
+//[CONFIG RANGE]: [-16, 0]
+#define HIGHLIGHT_ROLLOFF_SCENE_MAX_STOPS (-6.5)
 
+//Smooth transition outside both ends of the active band to prevent visible
+//switching as the game's exposure adapts.
 //[CONFIG TYPE]: float
-//[CONFIG DEFAULT]: -4.0
-#define HIGHLIGHT_ROLLOFF_OUTDOOR_OFF_STOPS (-4.0)
+//[CONFIG DEFAULT]: 0.5
+//[CONFIG RANGE]: [0, 4]
+#define HIGHLIGHT_ROLLOFF_SCENE_FADE_STOPS 3
 
 //(TEMP DEBUG) left = preserved game grade, right = raw HDR into GT7.
 //This isolates highlight damage introduced by the LUT/inverse reconstruction.
@@ -1240,11 +1248,17 @@ PixelOutput main(PixelInput input)
 
 	#if defined(HIGHLIGHT_ROLLOFF)
 		float preExposureStops = log2(max(View_PreExposure, 1.0e-6f));
-		float outdoorRolloffStrength = 1.0f - smoothstep(
-			HIGHLIGHT_ROLLOFF_OUTDOOR_FULL_STOPS,
-			HIGHLIGHT_ROLLOFF_OUTDOOR_OFF_STOPS,
+		float sceneFadeStops = max(HIGHLIGHT_ROLLOFF_SCENE_FADE_STOPS, 1.0e-4f);
+		float enterRolloffRange = smoothstep(
+			HIGHLIGHT_ROLLOFF_SCENE_MIN_STOPS - sceneFadeStops,
+			HIGHLIGHT_ROLLOFF_SCENE_MIN_STOPS,
 			preExposureStops);
-		sceneColor = lerp(sceneColor, ApplyHighlightRolloff(sceneColor), outdoorRolloffStrength);
+		float leaveRolloffRange = 1.0f - smoothstep(
+			HIGHLIGHT_ROLLOFF_SCENE_MAX_STOPS,
+			HIGHLIGHT_ROLLOFF_SCENE_MAX_STOPS + sceneFadeStops,
+			preExposureStops);
+		float sceneRolloffStrength = enterRolloffRange * leaveRolloffRange;
+		sceneColor = lerp(sceneColor, ApplyHighlightRolloff(sceneColor), sceneRolloffStrength);
 	#endif
 
 	#if defined(DEBUG_COLOR_CHART)

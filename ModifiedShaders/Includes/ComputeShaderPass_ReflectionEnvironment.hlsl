@@ -67,7 +67,7 @@
 // #define DEBUG_INDIRECT_ENV_LUMINANCE
 
 //(TEMP DEBUG) shows a 32-band pre-exposure meter across the top of the screen.
-// #define DEBUG_INDIRECT_PREEXPOSURE_METER
+#define DEBUG_INDIRECT_PREEXPOSURE_METER
 
 //this controls the brightness of the final combined ambient + direct light that this shader ultimately returns
 //[CONFIG TYPE]: float
@@ -2260,14 +2260,14 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     #if defined(DEBUG_INDIRECT_PREEXPOSURE_METER)
         //Keep the scene visible while replacing only its top strip with a
         //threshold meter. Alternating brightness makes the half-stop bands easy
-        //to count: far left is -8 stops, screen center is 0, far right is +8.
+        //to count: far left is -16 stops, screen center is -8, far right is 0.
         if (vector_uvNormalized.y < 0.12f)
         {
             const float meterBandCount = 32.0f;
             float meterBand = min(floor(saturate(vector_uvNormalized.x) * meterBandCount), meterBandCount - 1.0f);
             float meterThresholdStops = lerp(
-                -8.0f,
-                8.0f,
+                -16.0f,
+                0.0f,
                 (meterBand + 0.5f) / meterBandCount);
             float thresholdPassed = step(meterThresholdStops, preExposureStops);
             float bandBrightness = lerp(0.65f, 1.0f, fmod(meterBand, 2.0f));
