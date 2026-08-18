@@ -68,17 +68,9 @@
 //[CONFIG RANGE]: [0, 4]
 #define HIGHLIGHT_ROLLOFF_SCENE_FADE_STOPS 3
 
-//Exposure compensation applied before highlight rolloff in the nuclear scene
-//band. Scaling the whole HDR signal preserves relative contrast before the
-//remaining extreme highlights enter the compression shoulder.
-//[CONFIG TYPE]: float
-//[CONFIG DEFAULT]: -1.5
-//[CONFIG RANGE]: [-4, 0]
-#define NUCLEAR_SCENE_EXPOSURE_EV (-4)
-
 //(TEMP DEBUG) left = preserved game grade, right = raw HDR into GT7.
 //This isolates highlight damage introduced by the LUT/inverse reconstruction.
-#define DEBUG_HIGHLIGHT_GRADE_SPLIT
+// #define DEBUG_HIGHLIGHT_GRADE_SPLIT
 
 //Uses compressed raw HDR directly through GT7 for the entire screen, bypassing
 //the game's baked color grade and inverse-ACES reconstruction. This overrides
@@ -1287,7 +1279,6 @@ PixelOutput main(PixelInput input)
 
 	#if defined(HIGHLIGHT_ROLLOFF)
 		float sceneRolloffStrength = CalculateNuclearSceneStrength(HIGHLIGHT_ROLLOFF_SCENE_FADE_STOPS);
-		sceneColor *= exp2(NUCLEAR_SCENE_EXPOSURE_EV * sceneRolloffStrength);
 		sceneColor = lerp(sceneColor, ApplyHighlightRolloff(sceneColor), sceneRolloffStrength);
 	#endif
 
