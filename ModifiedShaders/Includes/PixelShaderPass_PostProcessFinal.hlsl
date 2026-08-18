@@ -14,6 +14,13 @@
 //The top strip is the low-to-high color legend. Disable after calibration.
 // #define DEBUG_HDR_LUMINANCE
 
+//(TEMP DEBUG) Four block meters at the top of the screen:
+//blue = pre-exposure stops [-16, 0]
+//yellow = required EV before clamping [-8, 8]
+//cyan = nuclear scene strength [0, 1]
+//magenta = final applied EV [-8, 8]
+#define DEBUG_NUCLEAR_EV_METER
+
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: -8.0
 #define DEBUG_HDR_LUMINANCE_MIN_STOPS (-8.0)
@@ -53,6 +60,19 @@
 //[CONFIG DEFAULT]: -4.0
 //[CONFIG RANGE]: [-8, 0]
 #define NUCLEAR_SCENE_EXPOSURE_EV (-4)
+
+//View_PreExposure at the calibrated Junon view where -4 EV looks correct.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: -9.0
+//[CONFIG RANGE]: [-16, 0]
+#define NUCLEAR_REFERENCE_PREEXPOSURE_STOPS (-9.0)
+
+//Maximum brightening allowed when the game's pre-exposure falls below the
+//reference. One stop is required to exactly match the measured -14 stop extreme.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 1.0
+//[CONFIG RANGE]: [0, 4]
+#define NUCLEAR_SCENE_MAX_BRIGHTEN_EV 1.0
 
 //(TEMP DEBUG) left = preserved game grade, right = raw HDR into GT7.
 //This isolates highlight damage introduced by the LUT/inverse reconstruction.
@@ -769,6 +789,84 @@ float CalculateNuclearSceneStrength()
 	return enterNuclearRange * leaveNuclearRange;
 }
 
+float CalculateRequiredNuclearExposureEV()
+{
+    float preExposureStops = log2(max(View_PreExposure, 1.0e-6f));
+    float referenceCombinedStops =
+        NUCLEAR_REFERENCE_PREEXPOSURE_STOPS +
+        min(NUCLEAR_SCENE_EXPOSURE_EV, 0.0f);
+    return referenceCombinedStops - preExposureStops;
+}
+
+float CalculateNuclearExposureEV(
+    float requiredExposureEV,
+    float nuclearSceneStrength)
+{
+    float minimumEV = min(NUCLEAR_SCENE_EXPOSURE_EV, 0.0f);
+    float maximumEV = max(NUCLEAR_SCENE_MAX_BRIGHTEN_EV, 0.0f);
+    float exposureEV = clamp(
+        requiredExposureEV,
+        minimumEV,
+        maximumEV);
+    return exposureEV * saturate(nuclearSceneStrength);
+}
+
+float DebugNuclearMeterBlocks(float x, float normalizedValue, float blockCount)
+{
+    float blockInterior = step(0.08f, frac(x * blockCount));
+    return step(x, saturate(normalizedValue)) * blockInterior;
+}
+
+float3 DrawDebugNuclearEVMeter(
+    float2 destinationUV,
+    float preExposureStops,
+    float requiredExposureEV,
+    float nuclearSceneStrength,
+    float appliedExposureEV)
+{
+    const float meterHeight = 0.027f;
+    const float meterGap = 0.005f;
+    const float meterStride = meterHeight + meterGap;
+    uint row = (uint)(destinationUV.y / meterStride);
+    float fill = 0.0f;
+    float3 color = 0.01f.xxx;
+
+    if (row == 0u)
+    {
+        fill = DebugNuclearMeterBlocks(
+            destinationUV.x,
+            (preExposureStops + 16.0f) / 16.0f,
+            16.0f);
+        color = lerp(0.01f.xxx, float3(0.0f, 0.35f, 1.0f), fill);
+    }
+    else if (row == 1u)
+    {
+        fill = DebugNuclearMeterBlocks(
+            destinationUV.x,
+            (requiredExposureEV + 8.0f) / 16.0f,
+            16.0f);
+        color = lerp(0.01f.xxx, float3(1.0f, 0.9f, 0.0f), fill);
+    }
+    else if (row == 2u)
+    {
+        fill = DebugNuclearMeterBlocks(
+            destinationUV.x,
+            nuclearSceneStrength,
+            20.0f);
+        color = lerp(0.01f.xxx, float3(0.0f, 1.0f, 1.0f), fill);
+    }
+    else if (row == 3u)
+    {
+        fill = DebugNuclearMeterBlocks(
+            destinationUV.x,
+            (appliedExposureEV + 8.0f) / 16.0f,
+            16.0f);
+        color = lerp(0.01f.xxx, float3(1.0f, 0.0f, 1.0f), fill);
+    }
+
+    return color;
+}
+
 float3 ApplyGlare(float3 sceneColor, float2 correctedDestinationUV)
 {
     float2 glareUV = DestinationUVToGlareTextureUV(correctedDestinationUV);
@@ -1192,6 +1290,29 @@ PixelOutput main(PixelInput input)
 
     float3 sceneColor = min(ColorTexture.SampleLevel(View_SharedBilinearClampedSampler, colorUV, 0.0f).rgb, 64512.0f.xxx);
 
+	#if defined(NUCLEAR_SCENE_EXPOSURE) || defined(DEBUG_NUCLEAR_EV_METER)
+		float nuclearPreExposureStops = log2(max(View_PreExposure, 1.0e-6f));
+		float nuclearSceneStrength = CalculateNuclearSceneStrength();
+		float nuclearRequiredExposureEV = CalculateRequiredNuclearExposureEV();
+		float nuclearExposureEV = CalculateNuclearExposureEV(
+			nuclearRequiredExposureEV,
+			nuclearSceneStrength);
+	#endif
+
+	#if defined(DEBUG_NUCLEAR_EV_METER)
+		const float debugNuclearMeterHeight = 0.128f;
+		if (destinationUV.y < debugNuclearMeterHeight)
+		{
+			output.Color = float4(DrawDebugNuclearEVMeter(
+				destinationUV,
+				nuclearPreExposureStops,
+				nuclearRequiredExposureEV,
+				nuclearSceneStrength,
+				nuclearExposureEV), 0.0f);
+			return output;
+		}
+	#endif
+
 	#if defined(DEBUG_HDR_LUMINANCE)
 		//Inspect the raw scene buffer. Using log2 luminance keeps both shaded and
 		//extremely bright pixels visible on one scale. The top strip replaces the
@@ -1224,8 +1345,7 @@ PixelOutput main(PixelInput input)
 	sceneColor = AdjustImage(sceneColor);
 
 	#if defined(NUCLEAR_SCENE_EXPOSURE)
-		float nuclearSceneStrength = CalculateNuclearSceneStrength();
-		sceneColor *= exp2(NUCLEAR_SCENE_EXPOSURE_EV * nuclearSceneStrength);
+		sceneColor *= exp2(nuclearExposureEV);
 	#endif
 
 	#if defined(DEBUG_COLOR_CHART)

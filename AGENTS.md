@@ -1,5 +1,9 @@
 # Repository Agent Instructions
 
+## Shader compilation scope
+
+Standalone `dxc` may be used only for disposable syntax validation: write to an explicitly temporary output inside the workspace, remove that output afterward.
+
 ## Keep routine Git requests fast
 
 When the user asks to create a branch, commit, and/or push existing work:

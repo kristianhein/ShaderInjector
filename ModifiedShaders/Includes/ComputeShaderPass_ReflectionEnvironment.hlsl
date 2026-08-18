@@ -67,7 +67,7 @@
 // #define DEBUG_INDIRECT_ENV_LUMINANCE
 
 //(TEMP DEBUG) shows a 32-band pre-exposure meter across the top of the screen.
-#define DEBUG_INDIRECT_PREEXPOSURE_METER
+// #define DEBUG_INDIRECT_PREEXPOSURE_METER
 
 //this controls the brightness of the final combined ambient + direct light that this shader ultimately returns
 //[CONFIG TYPE]: float
