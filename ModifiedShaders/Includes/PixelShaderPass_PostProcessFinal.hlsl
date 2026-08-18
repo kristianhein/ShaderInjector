@@ -32,14 +32,14 @@
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.5
 //[CONFIG RANGE]: [0.01, 16]
-#define HIGHLIGHT_ROLLOFF_START 0.3
+#define HIGHLIGHT_ROLLOFF_START 16
 
 //Compression strength. 0 disables compression; larger values produce a
 //stronger shoulder and reveal more detail in extreme highlights.
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.75
 //[CONFIG RANGE]: [0, 4]
-#define HIGHLIGHT_ROLLOFF_STRENGTH 3.0
+#define HIGHLIGHT_ROLLOFF_STRENGTH 0
 
 //Gradually compresses highlight chroma toward the darkest RGB channel. This
 //darkens vivid highlights instead of washing them toward equal-luminance grey.
@@ -47,7 +47,7 @@
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.5
 //[CONFIG RANGE]: [0, 1]
-#define HIGHLIGHT_ROLLOFF_DESATURATION 0.7
+#define HIGHLIGHT_ROLLOFF_DESATURATION 0
 
 //Pre-exposure band where highlight rolloff is active. On the -16 to 0 debug
 //meter, 8 green bands is about -12 stops and 20 bands is about -6 stops.
@@ -75,6 +75,40 @@
 //[CONFIG DEFAULT]: -1.5
 //[CONFIG RANGE]: [-4, 0]
 #define NUCLEAR_SCENE_EXPOSURE_EV (-4)
+
+//Raw pre-exposed HDR luminance range used to identify nuclear background pixels.
+//This mask is captured before bloom, auto exposure, and image adjustments so
+//dark foreground subjects are not lifted into the correction range.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.02
+//[CONFIG RANGE]: [0, 1]
+#define NUCLEAR_PIXEL_LUMINANCE_LOW 0.5
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.08
+//[CONFIG RANGE]: [0, 2]
+#define NUCLEAR_PIXEL_LUMINANCE_HIGH 1.5
+
+//Radius, in source pixels, used to classify broad nuclear-bright regions.
+//A neighborhood average prevents individual water ripples from receiving
+//different exposure corrections and producing posterized bands.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 12.0
+//[CONFIG RANGE]: [1, 64]
+#define NUCLEAR_MASK_SAMPLE_RADIUS 12.0
+
+//Protects a center pixel when it is much darker than the surrounding region.
+//This keeps foreground silhouettes out of the nuclear correction while broad
+//bright surfaces such as distant water remain eligible.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.08
+//[CONFIG RANGE]: [0, 1]
+#define NUCLEAR_FOREGROUND_RATIO_LOW 0.08
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.30
+//[CONFIG RANGE]: [0, 1]
+#define NUCLEAR_FOREGROUND_RATIO_HIGH 0.30
 
 //(TEMP DEBUG) left = preserved game grade, right = raw HDR into GT7.
 //This isolates highlight damage introduced by the LUT/inverse reconstruction.
@@ -768,6 +802,24 @@ float2 DestinationUVToColorTextureUV(float2 destinationUV)
     return clamp(textureUV, ViewportColor_UVViewportBilinearMin, ViewportColor_UVViewportBilinearMax);
 }
 
+float SampleRawSceneLuminance(float2 colorUV)
+{
+	float2 clampedUV = clamp(colorUV, ViewportColor_UVViewportBilinearMin, ViewportColor_UVViewportBilinearMax);
+	float3 color = min(ColorTexture.SampleLevel(View_SharedBilinearClampedSampler, clampedUV, 0.0f).rgb, 64512.0f.xxx);
+	return LuminanceRec709(max(color, 0.0f.xxx));
+}
+
+float CalculateNuclearNeighborhoodLuminance(float2 colorUV, float centerLuminance)
+{
+	float2 offset = ViewportColor_ExtentInverse * max(NUCLEAR_MASK_SAMPLE_RADIUS, 1.0f);
+	float luminanceSum = centerLuminance;
+	luminanceSum += SampleRawSceneLuminance(colorUV + float2(offset.x, 0.0f));
+	luminanceSum += SampleRawSceneLuminance(colorUV - float2(offset.x, 0.0f));
+	luminanceSum += SampleRawSceneLuminance(colorUV + float2(0.0f, offset.y));
+	luminanceSum += SampleRawSceneLuminance(colorUV - float2(0.0f, offset.y));
+	return luminanceSum * 0.2f;
+}
+
 float2 DestinationUVToGlareTextureUV(float2 destinationUV)
 {
     float2 viewportPixel = destinationUV * ViewportGlare_ViewportSize + float2(ViewportGlare_ViewportMin);
@@ -1253,6 +1305,7 @@ PixelOutput main(PixelInput input)
     float2 compositeUV = MakeCenteredCompositeUV(destinationUV);
 
     float3 sceneColor = min(ColorTexture.SampleLevel(View_SharedBilinearClampedSampler, colorUV, 0.0f).rgb, 64512.0f.xxx);
+	float rawSceneLuminance = LuminanceRec709(max(sceneColor, 0.0f.xxx));
 
 	#if defined(DEBUG_HDR_LUMINANCE)
 		//Inspect the raw scene buffer. Using log2 luminance keeps both shaded and
@@ -1286,9 +1339,21 @@ PixelOutput main(PixelInput input)
 	sceneColor = AdjustImage(sceneColor);
 
 	#if defined(HIGHLIGHT_ROLLOFF)
-		float sceneRolloffStrength = CalculateNuclearSceneStrength(HIGHLIGHT_ROLLOFF_SCENE_FADE_STOPS);
-		sceneColor *= exp2(NUCLEAR_SCENE_EXPOSURE_EV * sceneRolloffStrength);
-		sceneColor = lerp(sceneColor, ApplyHighlightRolloff(sceneColor), sceneRolloffStrength);
+		float nuclearSceneStrength = CalculateNuclearSceneStrength(HIGHLIGHT_ROLLOFF_SCENE_FADE_STOPS);
+		float nuclearNeighborhoodLuminance = CalculateNuclearNeighborhoodLuminance(colorUV, rawSceneLuminance);
+		float nuclearBackgroundMask = smoothstep(
+			min(NUCLEAR_PIXEL_LUMINANCE_LOW, NUCLEAR_PIXEL_LUMINANCE_HIGH),
+			max(NUCLEAR_PIXEL_LUMINANCE_LOW, NUCLEAR_PIXEL_LUMINANCE_HIGH),
+			nuclearNeighborhoodLuminance);
+		float foregroundRatio = rawSceneLuminance / max(nuclearNeighborhoodLuminance, 1.0e-6f);
+		float foregroundProtection = smoothstep(
+			min(NUCLEAR_FOREGROUND_RATIO_LOW, NUCLEAR_FOREGROUND_RATIO_HIGH),
+			max(NUCLEAR_FOREGROUND_RATIO_LOW, NUCLEAR_FOREGROUND_RATIO_HIGH),
+			foregroundRatio);
+		float nuclearPixelMask = nuclearBackgroundMask * foregroundProtection;
+		float nuclearPixelStrength = nuclearSceneStrength * nuclearPixelMask;
+		sceneColor *= exp2(NUCLEAR_SCENE_EXPOSURE_EV * nuclearPixelStrength);
+		sceneColor = lerp(sceneColor, ApplyHighlightRolloff(sceneColor), nuclearPixelStrength);
 	#endif
 
 	#if defined(DEBUG_COLOR_CHART)
