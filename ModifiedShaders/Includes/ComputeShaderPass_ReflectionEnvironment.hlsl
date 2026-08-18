@@ -20,7 +20,7 @@
 //indirect diffuse targets for the calibrated environment classes
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.8
-#define INDIRECT_DIFFUSE_SCALE_BEACH 1.8
+#define INDIRECT_DIFFUSE_SCALE_BEACH 1.8 // affects Gongaga
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 2.5

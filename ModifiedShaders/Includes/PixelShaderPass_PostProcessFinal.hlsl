@@ -14,12 +14,12 @@
 //The top strip is the low-to-high color legend. Disable after calibration.
 // #define DEBUG_HDR_LUMINANCE
 
-//(TEMP DEBUG) Four block meters at the top of the screen:
+//Four block meters at the top of the screen:
 //blue = pre-exposure stops [-16, 0]
 //yellow = required EV before clamping [-8, 8]
 //cyan = nuclear scene strength [0, 1]
 //magenta = final applied EV [-8, 8]
-#define DEBUG_NUCLEAR_EV_METER
+// #define DEBUG_NUCLEAR_EV_METER
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: -8.0
@@ -44,9 +44,9 @@
 #define NUCLEAR_SCENE_MIN_STOPS (-12.0)
 
 //[CONFIG TYPE]: float
-//[CONFIG DEFAULT]: -6.5
+//[CONFIG DEFAULT]: -3.5
 //[CONFIG RANGE]: [-16, 0]
-#define NUCLEAR_SCENE_MAX_STOPS (-6.5)
+#define NUCLEAR_SCENE_MAX_STOPS (-3.5)
 
 //Smooth transition outside both ends of the active band to prevent visible
 //switching as the game's exposure adapts.
@@ -55,11 +55,18 @@
 //[CONFIG RANGE]: [0, 4]
 #define NUCLEAR_SCENE_FADE_STOPS 3.0
 
-//Uniform exposure compensation applied before tonemapping.
+//Exposure correction at the calibrated Junon reference view.
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: -4.0
 //[CONFIG RANGE]: [-8, 0]
 #define NUCLEAR_SCENE_EXPOSURE_EV (-4)
+
+//Maximum darkening available at camera angles whose pre-exposure requires more
+//than the -4 EV reference correction.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: -8.0
+//[CONFIG RANGE]: [-12, -4]
+#define NUCLEAR_SCENE_MIN_EXPOSURE_EV (-8.0)
 
 //View_PreExposure at the calibrated Junon view where -4 EV looks correct.
 //[CONFIG TYPE]: float
@@ -802,7 +809,7 @@ float CalculateNuclearExposureEV(
     float requiredExposureEV,
     float nuclearSceneStrength)
 {
-    float minimumEV = min(NUCLEAR_SCENE_EXPOSURE_EV, 0.0f);
+    float minimumEV = min(NUCLEAR_SCENE_MIN_EXPOSURE_EV, 0.0f);
     float maximumEV = max(NUCLEAR_SCENE_MAX_BRIGHTEN_EV, 0.0f);
     float exposureEV = clamp(
         requiredExposureEV,
@@ -811,6 +818,7 @@ float CalculateNuclearExposureEV(
     return exposureEV * saturate(nuclearSceneStrength);
 }
 
+#if defined(DEBUG_NUCLEAR_EV_METER)
 float DebugNuclearMeterBlocks(float x, float normalizedValue, float blockCount)
 {
     float blockInterior = step(0.08f, frac(x * blockCount));
@@ -833,39 +841,28 @@ float3 DrawDebugNuclearEVMeter(
 
     if (row == 0u)
     {
-        fill = DebugNuclearMeterBlocks(
-            destinationUV.x,
-            (preExposureStops + 16.0f) / 16.0f,
-            16.0f);
+        fill = DebugNuclearMeterBlocks(destinationUV.x, (preExposureStops + 16.0f) / 16.0f, 16.0f);
         color = lerp(0.01f.xxx, float3(0.0f, 0.35f, 1.0f), fill);
     }
     else if (row == 1u)
     {
-        fill = DebugNuclearMeterBlocks(
-            destinationUV.x,
-            (requiredExposureEV + 8.0f) / 16.0f,
-            16.0f);
+        fill = DebugNuclearMeterBlocks(destinationUV.x, (requiredExposureEV + 8.0f) / 16.0f, 16.0f);
         color = lerp(0.01f.xxx, float3(1.0f, 0.9f, 0.0f), fill);
     }
     else if (row == 2u)
     {
-        fill = DebugNuclearMeterBlocks(
-            destinationUV.x,
-            nuclearSceneStrength,
-            20.0f);
+        fill = DebugNuclearMeterBlocks(destinationUV.x, nuclearSceneStrength, 20.0f);
         color = lerp(0.01f.xxx, float3(0.0f, 1.0f, 1.0f), fill);
     }
     else if (row == 3u)
     {
-        fill = DebugNuclearMeterBlocks(
-            destinationUV.x,
-            (appliedExposureEV + 8.0f) / 16.0f,
-            16.0f);
+        fill = DebugNuclearMeterBlocks(destinationUV.x, (appliedExposureEV + 8.0f) / 16.0f, 16.0f);
         color = lerp(0.01f.xxx, float3(1.0f, 0.0f, 1.0f), fill);
     }
 
     return color;
 }
+#endif
 
 float3 ApplyGlare(float3 sceneColor, float2 correctedDestinationUV)
 {
