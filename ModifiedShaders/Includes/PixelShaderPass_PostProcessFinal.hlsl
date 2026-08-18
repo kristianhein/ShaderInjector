@@ -10,7 +10,7 @@
 //[NO CONFIG]
 //#define DEBUG_COLOR_CHART
 
-//(TEMP DEBUG) visualizes raw pre-tonemap HDR luminance on a logarithmic scale.
+//Visualizes raw pre-tonemap HDR luminance on a logarithmic scale.
 //The top strip is the low-to-high color legend. Disable after calibration.
 // #define DEBUG_HDR_LUMINANCE
 
@@ -19,7 +19,7 @@
 //yellow = required EV before clamping [-8, 8]
 //cyan = nuclear scene strength [0, 1]
 //magenta = final applied EV [-8, 8]
-// #define DEBUG_NUCLEAR_EV_METER
+#define DEBUG_NUCLEAR_EV_METER
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: -8.0
@@ -36,8 +36,8 @@
 //pixel-to-pixel contrast and avoids material/depth masking artifacts.
 #define NUCLEAR_SCENE_EXPOSURE
 
-//Pre-exposure band where the correction is active. On the -16 to 0 debug meter,
-//8 green bands is about -12 stops and 20 bands is about -6 stops.
+//Pre-exposure band where the correction is fully active. The configured fade
+//extends beyond both ends to avoid abrupt switching during exposure adaptation.
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: -12.0
 //[CONFIG RANGE]: [-16, 0]
@@ -55,20 +55,21 @@
 //[CONFIG RANGE]: [0, 4]
 #define NUCLEAR_SCENE_FADE_STOPS 3.0
 
-//Exposure correction at the calibrated Junon reference view.
+//Compromise correction at the calibrated Junon reference view. The exterior-only
+//match was -4 EV; -3 EV preserves one additional stop for the shaded foreground.
 //[CONFIG TYPE]: float
-//[CONFIG DEFAULT]: -4.0
+//[CONFIG DEFAULT]: -3.0
 //[CONFIG RANGE]: [-8, 0]
 #define NUCLEAR_SCENE_EXPOSURE_EV (-4)
 
 //Maximum darkening available at camera angles whose pre-exposure requires more
-//than the -4 EV reference correction.
+//than the reference correction.
 //[CONFIG TYPE]: float
-//[CONFIG DEFAULT]: -8.0
+//[CONFIG DEFAULT]: -5.0
 //[CONFIG RANGE]: [-12, -4]
-#define NUCLEAR_SCENE_MIN_EXPOSURE_EV (-8.0)
+#define NUCLEAR_SCENE_MIN_EXPOSURE_EV (-5.0)
 
-//View_PreExposure at the calibrated Junon view where -4 EV looks correct.
+//View_PreExposure at the calibrated Junon reference view.
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: -9.0
 //[CONFIG RANGE]: [-16, 0]
@@ -81,9 +82,9 @@
 //[CONFIG RANGE]: [0, 4]
 #define NUCLEAR_SCENE_MAX_BRIGHTEN_EV 1.0
 
-//(TEMP DEBUG) left = preserved game grade, right = raw HDR into GT7.
+//Debug comparison: left = preserved game grade, right = raw HDR into GT7.
 //This isolates highlight damage introduced by the LUT/inverse reconstruction.
-#define DEBUG_HIGHLIGHT_GRADE_SPLIT
+// #define DEBUG_HIGHLIGHT_GRADE_SPLIT
 
 //Uses compressed raw HDR directly through GT7 for the entire screen, bypassing
 //the game's baked color grade and inverse-ACES reconstruction. This overrides
