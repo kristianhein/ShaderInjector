@@ -26,20 +26,20 @@
 
 //Compresses bright HDR values before tonemapping. Strongly compressed highlights
 //can also be desaturated to avoid unnaturally vivid skies and vegetation.
-#define HIGHLIGHT_ROLLOFF
+// #define HIGHLIGHT_ROLLOFF
 
 //Linear luminance where compression begins. Values below this are unchanged.
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.5
 //[CONFIG RANGE]: [0.01, 16]
-#define HIGHLIGHT_ROLLOFF_START 0.3
+#define HIGHLIGHT_ROLLOFF_START 0.01
 
 //Compression strength. 0 disables compression; larger values produce a
 //stronger shoulder and reveal more detail in extreme highlights.
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.75
 //[CONFIG RANGE]: [0, 4]
-#define HIGHLIGHT_ROLLOFF_STRENGTH 3.0
+#define HIGHLIGHT_ROLLOFF_STRENGTH 8.0
 
 //Gradually compresses highlight chroma toward the darkest RGB channel. This
 //darkens vivid highlights instead of washing them toward equal-luminance grey.
@@ -50,7 +50,7 @@
 #define HIGHLIGHT_ROLLOFF_DESATURATION 0.7
 
 //Pre-exposure band where highlight rolloff is active. On the -16 to 0 debug
-//meter, 8 green bands is about -12 stops and 20 bands is about -6 stops.
+//meter, 8 green bands is about -12 stops and 19 bands is about -6.5 stops.
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: -12.0
 //[CONFIG RANGE]: [-16, 0]
