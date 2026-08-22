@@ -38,11 +38,11 @@
 //NOTE: these values need to be calibrated against the in-game debug visualization
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.1
-#define INDIRECT_ENV_LUMINANCE_LOW 4000
+#define INDIRECT_ENV_LUMINANCE_LOW 2000
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.0
-#define INDIRECT_ENV_LUMINANCE_HIGH 8000
+#define INDIRECT_ENV_LUMINANCE_HIGH 4000
 
 //pre-exposure range that moves a weak-capture bright scene toward the Manor target
 //[CONFIG TYPE]: float
@@ -68,6 +68,10 @@
 
 //(TEMP DEBUG) shows a 32-band pre-exposure meter across the top of the screen.
 // #define DEBUG_INDIRECT_PREEXPOSURE_METER
+
+//(TEMP DEBUG) three top-screen meters for the view-global environment:
+//fallback validity, log2 luminance from 0 to 16 stops, Grasslands strength.
+// #define DEBUG_INDIRECT_GLOBAL_ENV_METER
 
 //this controls the brightness of the final combined ambient + direct light that this shader ultimately returns
 //[CONFIG TYPE]: float
@@ -2174,10 +2178,22 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     float3 specular = ambiguousA + globalIlluminationRadiance;
     float3 diffuse = ambiguousB + globalIlluminationIrradiance;
 
-    //The fixed-direction high-mip sample already used by the capture blending path
-    //serves as a probe-level environment-brightness reference. It is independent of
-    //surface normals, materials, scene color, and projected direct-light shadows.
-    float environmentReferenceLuminance = LuminanceRec709(max(environment.CubemapReference, 0.0f));
+    //Keep local probes for lighting, but classify the scene from the view-global
+    //fallback environment. Unlike a probe selected at a surface or at the camera,
+    //this reference does not change as geometry, the character, or camera moves.
+    float3 sceneEnvironmentReference = 0.0f;
+    float fallbackEnvironmentAvailable = View_EnvironmentLightFallbackContext.w != 0.0f ? 1.0f : 0.0f;
+
+    if (fallbackEnvironmentAvailable != 0.0f)
+    {
+        float fallbackScale = exp2(View_EnvironmentLightFallbackContext.x);
+        sceneEnvironmentReference = fallbackScale * View_EnvironmentLightFallbackTexture.SampleLevel(
+            View_SharedPointWrappedSampler,
+            float3(1.0f, 0.0f, 0.0f),
+            7.0f).rgb;
+    }
+
+    float environmentReferenceLuminance = LuminanceRec709(max(sceneEnvironmentReference, 0.0f));
     float environmentStrength = smoothstep(INDIRECT_ENV_LUMINANCE_LOW, INDIRECT_ENV_LUMINANCE_HIGH, environmentReferenceLuminance);
     float preExposureStops = log2(max(View_PreExposure, 1.0e-6f));
     float darkSceneStrength = smoothstep(INDIRECT_DARK_SCENE_LOW_STOPS, INDIRECT_DARK_SCENE_HIGH_STOPS, preExposureStops);
@@ -2277,6 +2293,56 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
                 thresholdPassed);
 
             OutTextureColor[vector_uvInt] = float4(meterColor, 1.0f);
+            return;
+        }
+    #endif
+
+    #if defined(DEBUG_INDIRECT_GLOBAL_ENV_METER)
+        const float globalMeterCount = 3.0f;
+        const float globalMeterBandCount = 32.0f;
+        const float globalMeterHeight = 0.05f;
+        const float globalMeterGap = 0.008f;
+        float globalMeterPitch = globalMeterHeight + globalMeterGap;
+        float globalMeterIndex = floor(vector_uvNormalized.y / globalMeterPitch);
+        float globalMeterLocalY = vector_uvNormalized.y - globalMeterIndex * globalMeterPitch;
+
+        if (globalMeterIndex < globalMeterCount && globalMeterLocalY < globalMeterHeight)
+        {
+            float globalMeterValue;
+            float3 globalMeterColor;
+
+            if (globalMeterIndex < 0.5f)
+            {
+                globalMeterValue = fallbackEnvironmentAvailable;
+                globalMeterColor = fallbackEnvironmentAvailable != 0.0f
+                    ? float3(0.1f, 1.0f, 0.1f)
+                    : float3(1.0f, 0.1f, 0.1f);
+            }
+            else if (globalMeterIndex < 1.5f)
+            {
+                globalMeterValue = saturate(log2(max(environmentReferenceLuminance, 1.0e-6f)) / 16.0f);
+                globalMeterColor = float3(0.9f, 0.9f, 0.9f);
+            }
+            else
+            {
+                globalMeterValue = environmentStrength;
+                globalMeterColor = float3(0.1f, 1.0f, 0.35f);
+            }
+
+            float globalMeterBand = min(
+                floor(saturate(vector_uvNormalized.x) * globalMeterBandCount),
+                globalMeterBandCount - 1.0f);
+            float globalMeterPassed = step(
+                (globalMeterBand + 0.5f) / globalMeterBandCount,
+                globalMeterValue);
+            float globalMeterBrightness = lerp(0.65f, 1.0f, fmod(globalMeterBand, 2.0f));
+
+            OutTextureColor[vector_uvInt] = float4(
+                lerp(
+                    float3(0.035f, 0.035f, 0.035f),
+                    globalMeterColor * globalMeterBrightness,
+                    globalMeterPassed),
+                1.0f);
             return;
         }
     #endif
