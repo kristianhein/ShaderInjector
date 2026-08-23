@@ -16,6 +16,19 @@
 //[CONFIG DEFAULT]: 1.0
 #define FOG_DENSITY_NEAR_FIELD_MULTIPLIER 1.0
 
+//(TEMP DEBUG) left = configured near-field scattering. Right selectively
+//boosts only stronger scattering, leaving weak ambient fog largely unchanged.
+#define DEBUG_NEAR_FOG_LIGHT_SCATTERING_SPLIT
+
+//Scattering luminance range over which the boost fades in. Scattering is
+//measured after removing the game's pre-exposure, so these thresholds remain
+//reasonably stable as exposure changes.
+#define DEBUG_NEAR_FOG_LIGHT_SCATTERING_LOW 0.02
+#define DEBUG_NEAR_FOG_LIGHT_SCATTERING_HIGH 0.20
+
+//Maximum multiplier applied to strong near-field scattering on the right.
+#define DEBUG_NEAR_FOG_LIGHT_SCATTERING_MAX 2.0
+
 //disables the far field volumetric fog far away from the player/camera
 // #define DISABLE_FAR_FOG
 
@@ -1072,6 +1085,24 @@ FApplyFogPSOutput main(FApplyFogPSInput input)
         float3 uvw = ClampIntegratedFogUVW(volumeCoordinate);
         volumeScattering = View_OneOverPreExposure * FogStruct_IntegratedScatteringVolumeATexture.SampleLevel(View_SharedBilinearClampedSampler, uvw, 0.0).rgb * FOG_DENSITY_NEAR_FIELD_MULTIPLIER;
         volumeTransmittance = FogStruct_IntegratedScatteringVolumeBTexture.SampleLevel(View_SharedBilinearClampedSampler, uvw, 0.0).rgb;
+
+        #if defined(DEBUG_NEAR_FOG_LIGHT_SCATTERING_SPLIT)
+            if (input.UV.x >= 0.5f)
+            {
+                float scatteringLuminance = dot(
+                    max(volumeScattering, 0.0f.xxx),
+                    float3(0.2126f, 0.7152f, 0.0722f));
+                float lightScatteringWeight = smoothstep(
+                    DEBUG_NEAR_FOG_LIGHT_SCATTERING_LOW,
+                    DEBUG_NEAR_FOG_LIGHT_SCATTERING_HIGH,
+                    scatteringLuminance);
+                float lightScatteringMultiplier = lerp(
+                    1.0f,
+                    DEBUG_NEAR_FOG_LIGHT_SCATTERING_MAX,
+                    lightScatteringWeight);
+                volumeScattering *= lightScatteringMultiplier;
+            }
+        #endif
     }
 
     #if defined(DISABLE_NEAR_FOG)
