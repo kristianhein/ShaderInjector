@@ -17,7 +17,7 @@
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 2.0
 //[CONFIG RANGE]: [0, 4]
-#define FOG_DENSITY_NEAR_FIELD_MULTIPLIER 1.3
+#define FOG_DENSITY_NEAR_FIELD_MULTIPLIER 1.7
 
 //disables the far field volumetric fog far away from the player/camera
 // #define DISABLE_FAR_FOG
