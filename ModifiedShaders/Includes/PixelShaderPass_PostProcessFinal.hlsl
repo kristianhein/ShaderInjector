@@ -41,6 +41,14 @@
 //[CONFIG DEFAULT]: 2
 #define BLOOM_ADDITIVE_INTENSITY 2.0
 
+//Scales the positive glare texture before the original signed compositor.
+//This strengthens lamp bloom without changing the base scene exposure or the
+//compositor's scene-attenuation term.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 2.0
+//[CONFIG RANGE]: [0, 4]
+#define GLARE_TEXTURE_INTENSITY 2.0
+
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - SHARPEN ||||||||||||||||||||||||||||||||||
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - SHARPEN ||||||||||||||||||||||||||||||||||
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - SHARPEN ||||||||||||||||||||||||||||||||||
@@ -65,7 +73,7 @@
 //(AUTO_EXPOSURE) automatic exposure, checks the overall exposure of the final image and adjusts the expousre so that it is not too bright or too dark.
 //unfortunately this is unusally expensive at the moment but because we are kinda limited... we just gotta deal with it for now
 //it's not perfect and will flicker occasionally, brightness changes are instantaneous also
-#define AUTO_EXPOSURE
+// #define AUTO_EXPOSURE
 
 //(AUTO_EXPOSURE) how many horizontal samples we take of the final image to gauge overall image exposure
 //more samples = more stable auto exposure (less flicker) but can be slower
@@ -715,7 +723,7 @@ float3 ApplyGlare(float3 sceneColor, float2 correctedDestinationUV)
 {
     float2 glareUV = DestinationUVToGlareTextureUV(correctedDestinationUV);
     float4 glareSample = min(GlareTexture.SampleLevel(View_SharedBilinearClampedSampler, glareUV, 0.0f), 64512.0f.xxxx);
-    float3 glareColor = glareSample.rgb;
+    float3 glareColor = glareSample.rgb * max(GLARE_TEXTURE_INTENSITY, 0.0f);
 
 	//quick debug checking terms
 	//return sceneColor; 
