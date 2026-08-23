@@ -24,7 +24,7 @@
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 2.5
-#define INDIRECT_DIFFUSE_SCALE_GRASSLAND 2.3
+#define INDIRECT_DIFFUSE_SCALE_GRASSLAND 2.5
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 2.5
@@ -32,7 +32,7 @@
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 3.0
-#define INDIRECT_DIFFUSE_SCALE_CAVE 3.5
+#define INDIRECT_DIFFUSE_SCALE_CAVE 4.0
 
 //Global fallback-capture chromaticity separates scenes whose luminance overlaps.
 //Measured green/blue ratios: Corel Beach 0.52-0.55, shaded Kalm 0.61-0.64,
