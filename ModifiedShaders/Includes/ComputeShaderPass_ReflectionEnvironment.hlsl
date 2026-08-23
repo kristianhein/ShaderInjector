@@ -17,6 +17,65 @@
 //[CONFIG DEFAULT]: 1.0
 #define AMBIENT_BRIGHTNESS 1.0
 
+//indirect diffuse targets for the calibrated environment classes
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 1.8
+#define INDIRECT_DIFFUSE_SCALE_BEACH 1.3
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 2.5
+#define INDIRECT_DIFFUSE_SCALE_GRASSLAND 2.5
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 2.5
+#define INDIRECT_DIFFUSE_SCALE_MANOR 2.0
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 3.0
+#define INDIRECT_DIFFUSE_SCALE_CAVE 3.5
+
+//Global fallback-capture chromaticity separates scenes whose luminance overlaps.
+//Measured green/blue ratios: Corel Beach 0.52-0.55, shaded Kalm 0.61-0.64,
+//bright Kalm and Grasslands 0.67-0.70. Luminance is intentionally excluded
+//because Kalm's global environment changes intensity across its lighting volumes.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.56
+#define INDIRECT_GRASSLAND_GREEN_BLUE_RATIO_LOW 0.56
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.60
+#define INDIRECT_GRASSLAND_GREEN_BLUE_RATIO_HIGH 0.60
+
+//pre-exposure range that moves a weak-capture bright scene toward the Manor target
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: -6.0
+#define INDIRECT_DARK_SCENE_LOW_STOPS (-6.0)
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: -4.0
+#define INDIRECT_DARK_SCENE_HIGH_STOPS (-4.0)
+
+//The calibrated Manor measured about -3.5 stops and Mythril Mine about 0 stops.
+//This upper range therefore adds the extra cave-only diffuse boost.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: -2.5
+#define INDIRECT_CAVE_PREEXPOSURE_LOW_STOPS (-2.5)
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: -1.0
+#define INDIRECT_CAVE_PREEXPOSURE_HIGH_STOPS (-1.0)
+
+//(DEBUG) red = weak capture, green = strong capture, blue = pre-exposure
+// #define DEBUG_INDIRECT_ENV_LUMINANCE
+
+//(TEMP DEBUG) shows a 32-band pre-exposure meter across the top of the screen.
+// #define DEBUG_INDIRECT_PREEXPOSURE_METER
+
+//(TEMP DEBUG) ten top-screen scene-signature meters:
+//global fallback validity, luminance, R/G/B chromaticity, green/blue ratio,
+//Grasslands strength, pre-exposure, Manor strength, Cave strength.
+// #define DEBUG_INDIRECT_GLOBAL_ENV_METER
+
 //this controls the brightness of the final combined ambient + direct light that this shader ultimately returns
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.0
@@ -2116,6 +2175,39 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     float3 specular = ambiguousA + globalIlluminationRadiance;
     float3 diffuse = ambiguousB + globalIlluminationIrradiance;
 
+    //Keep local probes for lighting, but classify the scene from the view-global
+    //fallback environment. Unlike a probe selected at a surface or at the camera,
+    //this reference does not change as geometry, the character, or camera moves.
+    float3 sceneEnvironmentReference = 0.0f;
+    float fallbackEnvironmentAvailable = View_EnvironmentLightFallbackContext.w != 0.0f ? 1.0f : 0.0f;
+
+    if (fallbackEnvironmentAvailable != 0.0f)
+    {
+        float fallbackScale = exp2(View_EnvironmentLightFallbackContext.x);
+        sceneEnvironmentReference = fallbackScale * View_EnvironmentLightFallbackTexture.SampleLevel(
+            View_SharedPointWrappedSampler,
+            float3(1.0f, 0.0f, 0.0f),
+            7.0f).rgb;
+    }
+
+    float environmentReferenceLuminance = LuminanceRec709(max(sceneEnvironmentReference, 0.0f));
+    float environmentGreenBlueRatio = sceneEnvironmentReference.g / max(sceneEnvironmentReference.b, 1.0e-6f);
+    float environmentStrength = smoothstep(
+        INDIRECT_GRASSLAND_GREEN_BLUE_RATIO_LOW,
+        INDIRECT_GRASSLAND_GREEN_BLUE_RATIO_HIGH,
+        environmentGreenBlueRatio);
+    float preExposureStops = log2(max(View_PreExposure, 1.0e-6f));
+    float darkSceneStrength = smoothstep(INDIRECT_DARK_SCENE_LOW_STOPS, INDIRECT_DARK_SCENE_HIGH_STOPS, preExposureStops);
+    float caveStrength = smoothstep(INDIRECT_CAVE_PREEXPOSURE_LOW_STOPS, INDIRECT_CAVE_PREEXPOSURE_HIGH_STOPS, preExposureStops);
+
+    //Global capture chromaticity groups Kalm with Grasslands while keeping Gongaga
+    //and the measured Beach signature together. Pre-exposure then moves dark
+    //interiors to the Manor target, with a second range for the darker Mythril Mine.
+    float brightSceneScale = lerp(INDIRECT_DIFFUSE_SCALE_BEACH, INDIRECT_DIFFUSE_SCALE_GRASSLAND, environmentStrength);
+    float nonCaveScale = lerp(brightSceneScale, INDIRECT_DIFFUSE_SCALE_MANOR, darkSceneStrength);
+    float adaptiveDiffuseScale = lerp(nonCaveScale, INDIRECT_DIFFUSE_SCALE_CAVE, caveStrength);
+    diffuse *= adaptiveDiffuseScale;
+
     #if defined(CAMERA_AMBIENT_LIGHT)
         float distanceToCamera = distance(View_WorldCameraOrigin, worldPosition);
         float falloff = rcp(distanceToCamera);
@@ -2181,6 +2273,129 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     //artistic adjustment users can do for those complaining about darkness... (little do they know most of them are too used to seeing the games inaccurate bright light leaks in shadows)
     //this is also an attempt at giving users a potential solution for being able to configure image brightness if they are in HDR since there is no post process HDR variant (at the time of writing)
     finalColor *= AMBIENT_BRIGHTNESS;
+
+    #if defined(DEBUG_INDIRECT_PREEXPOSURE_METER)
+        //Keep the scene visible while replacing only its top strip with a
+        //threshold meter. Alternating brightness makes the half-stop bands easy
+        //to count: far left is -16 stops, screen center is -8, far right is 0.
+        if (vector_uvNormalized.y < 0.12f)
+        {
+            const float meterBandCount = 32.0f;
+            float meterBand = min(floor(saturate(vector_uvNormalized.x) * meterBandCount), meterBandCount - 1.0f);
+            float meterThresholdStops = lerp(
+                -16.0f,
+                0.0f,
+                (meterBand + 0.5f) / meterBandCount);
+            float thresholdPassed = step(meterThresholdStops, preExposureStops);
+            float bandBrightness = lerp(0.65f, 1.0f, fmod(meterBand, 2.0f));
+            float3 meterColor = lerp(
+                float3(bandBrightness, 0.0f, 0.0f),
+                float3(0.0f, bandBrightness, 0.0f),
+                thresholdPassed);
+
+            OutTextureColor[vector_uvInt] = float4(meterColor, 1.0f);
+            return;
+        }
+    #endif
+
+    #if defined(DEBUG_INDIRECT_GLOBAL_ENV_METER)
+        float globalReferenceSum = max(
+            sceneEnvironmentReference.r + sceneEnvironmentReference.g + sceneEnvironmentReference.b,
+            1.0e-6f);
+        float3 globalReferenceChromaticity = sceneEnvironmentReference / globalReferenceSum;
+        float globalGreenBlueRatio = sceneEnvironmentReference.g / max(sceneEnvironmentReference.b, 1.0e-6f);
+
+        const float globalMeterCount = 10.0f;
+        const float globalMeterBandCount = 32.0f;
+        const float globalMeterHeight = 0.025f;
+        const float globalMeterGap = 0.004f;
+        float globalMeterPitch = globalMeterHeight + globalMeterGap;
+        float globalMeterIndex = floor(vector_uvNormalized.y / globalMeterPitch);
+        float globalMeterLocalY = vector_uvNormalized.y - globalMeterIndex * globalMeterPitch;
+
+        if (globalMeterIndex < globalMeterCount && globalMeterLocalY < globalMeterHeight)
+        {
+            float globalMeterValue;
+            float3 globalMeterColor;
+
+            if (globalMeterIndex < 0.5f)
+            {
+                globalMeterValue = fallbackEnvironmentAvailable;
+                globalMeterColor = fallbackEnvironmentAvailable != 0.0f
+                    ? float3(0.1f, 1.0f, 0.1f)
+                    : float3(1.0f, 0.1f, 0.1f);
+            }
+            else if (globalMeterIndex < 1.5f)
+            {
+                globalMeterValue = saturate(log2(max(environmentReferenceLuminance, 1.0e-6f)) / 16.0f);
+                globalMeterColor = float3(0.9f, 0.9f, 0.9f);
+            }
+            else if (globalMeterIndex < 2.5f)
+            {
+                globalMeterValue = saturate(globalReferenceChromaticity.r / 0.8f);
+                globalMeterColor = float3(1.0f, 0.08f, 0.08f);
+            }
+            else if (globalMeterIndex < 3.5f)
+            {
+                globalMeterValue = saturate(globalReferenceChromaticity.g / 0.8f);
+                globalMeterColor = float3(0.08f, 1.0f, 0.08f);
+            }
+            else if (globalMeterIndex < 4.5f)
+            {
+                globalMeterValue = saturate(globalReferenceChromaticity.b / 0.8f);
+                globalMeterColor = float3(0.08f, 0.25f, 1.0f);
+            }
+            else if (globalMeterIndex < 5.5f)
+            {
+                globalMeterValue = saturate(globalGreenBlueRatio);
+                globalMeterColor = float3(0.1f, 1.0f, 0.45f);
+            }
+            else if (globalMeterIndex < 6.5f)
+            {
+                globalMeterValue = environmentStrength;
+                globalMeterColor = float3(0.1f, 1.0f, 0.35f);
+            }
+            else if (globalMeterIndex < 7.5f)
+            {
+                globalMeterValue = saturate((preExposureStops + 16.0f) / 16.0f);
+                globalMeterColor = float3(0.15f, 0.5f, 1.0f);
+            }
+            else if (globalMeterIndex < 8.5f)
+            {
+                globalMeterValue = darkSceneStrength;
+                globalMeterColor = float3(1.0f, 0.55f, 0.1f);
+            }
+            else
+            {
+                globalMeterValue = caveStrength;
+                globalMeterColor = float3(0.7f, 0.2f, 1.0f);
+            }
+
+            float globalMeterBand = min(
+                floor(saturate(vector_uvNormalized.x) * globalMeterBandCount),
+                globalMeterBandCount - 1.0f);
+            float globalMeterPassed = step(
+                (globalMeterBand + 0.5f) / globalMeterBandCount,
+                globalMeterValue);
+            float globalMeterBrightness = lerp(0.65f, 1.0f, fmod(globalMeterBand, 2.0f));
+
+            OutTextureColor[vector_uvInt] = float4(
+                lerp(
+                    float3(0.035f, 0.035f, 0.035f),
+                    globalMeterColor * globalMeterBrightness,
+                    globalMeterPassed),
+                1.0f);
+            return;
+        }
+    #endif
+
+    #if defined(DEBUG_INDIRECT_ENV_LUMINANCE)
+        //Pre-exposure is encoded logarithmically so both small and large exposure
+        //values remain visible. Compare the blue component of the beach and cave.
+        float3 debugEnvironmentColor = float3(1.0f - environmentStrength, environmentStrength, darkSceneStrength);
+        OutTextureColor[vector_uvInt] = float4(debugEnvironmentColor, 1.0f);
+        return;
+    #endif
 
     OutTextureColor[vector_uvInt] += finalColor;
 	//OutTextureColor[vector_uvInt] = finalColor;
