@@ -20,11 +20,11 @@
 //indirect diffuse targets for the calibrated environment classes
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.8
-#define INDIRECT_DIFFUSE_SCALE_BEACH 1.4
+#define INDIRECT_DIFFUSE_SCALE_BEACH 1.5
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 2.5
-#define INDIRECT_DIFFUSE_SCALE_GRASSLAND 2.5
+#define INDIRECT_DIFFUSE_SCALE_GRASSLAND 1.5
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 2.5
@@ -32,17 +32,19 @@
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 3.0
-#define INDIRECT_DIFFUSE_SCALE_CAVE 5.0
+#define INDIRECT_DIFFUSE_SCALE_CAVE 4.0
 
-//capture luminance range used to transition from the weak to strong multiplier
-//NOTE: these values need to be calibrated against the in-game debug visualization
+//Global fallback-capture chromaticity separates scenes whose luminance overlaps.
+//Measured green/blue ratios: Corel Beach 0.52-0.55, shaded Kalm 0.61-0.64,
+//bright Kalm and Grasslands 0.67-0.70. Luminance is intentionally excluded
+//because Kalm's global environment changes intensity across its lighting volumes.
 //[CONFIG TYPE]: float
-//[CONFIG DEFAULT]: 0.1
-#define INDIRECT_ENV_LUMINANCE_LOW 2000
+//[CONFIG DEFAULT]: 0.56
+#define INDIRECT_GRASSLAND_GREEN_BLUE_RATIO_LOW 0.56
 
 //[CONFIG TYPE]: float
-//[CONFIG DEFAULT]: 1.0
-#define INDIRECT_ENV_LUMINANCE_HIGH 4000
+//[CONFIG DEFAULT]: 0.60
+#define INDIRECT_GRASSLAND_GREEN_BLUE_RATIO_HIGH 0.60
 
 //pre-exposure range that moves a weak-capture bright scene toward the Manor target
 //[CONFIG TYPE]: float
@@ -69,8 +71,9 @@
 //(TEMP DEBUG) shows a 32-band pre-exposure meter across the top of the screen.
 // #define DEBUG_INDIRECT_PREEXPOSURE_METER
 
-//(TEMP DEBUG) three top-screen meters for the view-global environment:
-//fallback validity, log2 luminance from 0 to 16 stops, Grasslands strength.
+//(TEMP DEBUG) ten top-screen scene-signature meters:
+//global fallback validity, luminance, R/G/B chromaticity, green/blue ratio,
+//Grasslands strength, pre-exposure, Manor strength, Cave strength.
 // #define DEBUG_INDIRECT_GLOBAL_ENV_METER
 
 //this controls the brightness of the final combined ambient + direct light that this shader ultimately returns
@@ -124,7 +127,7 @@
 //Lower Values: less contrast
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.0
-#define SSAO_POWER 1.5
+#define SSAO_POWER 1.3
 
 //controls how bright the AO term is in ambient light (use in tandem with SSAO_POWER)
 //NOTE: original game SSAO is much weaker than the SSGI AO, if your flipping back and fourth you'll need to readjust the values
@@ -2086,7 +2089,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 		//manual adjustment to get the original game SSAO to match the strength of the SSGI AO
 
         //strengthen AO for all but eyes, eyes become too dark with the original game SSAO
-        if (gbufferData.ShadingModelID != SHADINGMODELID_EYE || gbufferData.ShadingModelID != SHADINGMODELID_HAIR)
+        if (gbufferData.ShadingModelID != SHADINGMODELID_EYE && gbufferData.ShadingModelID != SHADINGMODELID_HAIR)
 		    gbufferData.ScreenAO = saturate(pow(gbufferData.ScreenAO, 2) * 1.0);
 
         if (gbufferData.ShadingModelID == SHADINGMODELID_EYE)
@@ -2194,14 +2197,18 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
 
     float environmentReferenceLuminance = LuminanceRec709(max(sceneEnvironmentReference, 0.0f));
-    float environmentStrength = smoothstep(INDIRECT_ENV_LUMINANCE_LOW, INDIRECT_ENV_LUMINANCE_HIGH, environmentReferenceLuminance);
+    float environmentGreenBlueRatio = sceneEnvironmentReference.g / max(sceneEnvironmentReference.b, 1.0e-6f);
+    float environmentStrength = smoothstep(
+        INDIRECT_GRASSLAND_GREEN_BLUE_RATIO_LOW,
+        INDIRECT_GRASSLAND_GREEN_BLUE_RATIO_HIGH,
+        environmentGreenBlueRatio);
     float preExposureStops = log2(max(View_PreExposure, 1.0e-6f));
     float darkSceneStrength = smoothstep(INDIRECT_DARK_SCENE_LOW_STOPS, INDIRECT_DARK_SCENE_HIGH_STOPS, preExposureStops);
     float caveStrength = smoothstep(INDIRECT_CAVE_PREEXPOSURE_LOW_STOPS, INDIRECT_CAVE_PREEXPOSURE_HIGH_STOPS, preExposureStops);
 
-    //Capture strength separates Beach from Grasslands. Pre-exposure then moves
-    //weak-capture dark interiors to the Manor target, with a second calibrated
-    //range reserved for the substantially darker Mythril Mine.
+    //Global capture chromaticity groups Kalm with Grasslands while keeping Gongaga
+    //and the measured Beach signature together. Pre-exposure then moves dark
+    //interiors to the Manor target, with a second range for the darker Mythril Mine.
     float brightSceneScale = lerp(INDIRECT_DIFFUSE_SCALE_BEACH, INDIRECT_DIFFUSE_SCALE_GRASSLAND, environmentStrength);
     float nonCaveScale = lerp(brightSceneScale, INDIRECT_DIFFUSE_SCALE_MANOR, darkSceneStrength);
     float adaptiveDiffuseScale = lerp(nonCaveScale, INDIRECT_DIFFUSE_SCALE_CAVE, caveStrength);
@@ -2298,10 +2305,16 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     #endif
 
     #if defined(DEBUG_INDIRECT_GLOBAL_ENV_METER)
-        const float globalMeterCount = 3.0f;
+        float globalReferenceSum = max(
+            sceneEnvironmentReference.r + sceneEnvironmentReference.g + sceneEnvironmentReference.b,
+            1.0e-6f);
+        float3 globalReferenceChromaticity = sceneEnvironmentReference / globalReferenceSum;
+        float globalGreenBlueRatio = sceneEnvironmentReference.g / max(sceneEnvironmentReference.b, 1.0e-6f);
+
+        const float globalMeterCount = 10.0f;
         const float globalMeterBandCount = 32.0f;
-        const float globalMeterHeight = 0.05f;
-        const float globalMeterGap = 0.008f;
+        const float globalMeterHeight = 0.025f;
+        const float globalMeterGap = 0.004f;
         float globalMeterPitch = globalMeterHeight + globalMeterGap;
         float globalMeterIndex = floor(vector_uvNormalized.y / globalMeterPitch);
         float globalMeterLocalY = vector_uvNormalized.y - globalMeterIndex * globalMeterPitch;
@@ -2323,10 +2336,45 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
                 globalMeterValue = saturate(log2(max(environmentReferenceLuminance, 1.0e-6f)) / 16.0f);
                 globalMeterColor = float3(0.9f, 0.9f, 0.9f);
             }
-            else
+            else if (globalMeterIndex < 2.5f)
+            {
+                globalMeterValue = saturate(globalReferenceChromaticity.r / 0.8f);
+                globalMeterColor = float3(1.0f, 0.08f, 0.08f);
+            }
+            else if (globalMeterIndex < 3.5f)
+            {
+                globalMeterValue = saturate(globalReferenceChromaticity.g / 0.8f);
+                globalMeterColor = float3(0.08f, 1.0f, 0.08f);
+            }
+            else if (globalMeterIndex < 4.5f)
+            {
+                globalMeterValue = saturate(globalReferenceChromaticity.b / 0.8f);
+                globalMeterColor = float3(0.08f, 0.25f, 1.0f);
+            }
+            else if (globalMeterIndex < 5.5f)
+            {
+                globalMeterValue = saturate(globalGreenBlueRatio);
+                globalMeterColor = float3(0.1f, 1.0f, 0.45f);
+            }
+            else if (globalMeterIndex < 6.5f)
             {
                 globalMeterValue = environmentStrength;
                 globalMeterColor = float3(0.1f, 1.0f, 0.35f);
+            }
+            else if (globalMeterIndex < 7.5f)
+            {
+                globalMeterValue = saturate((preExposureStops + 16.0f) / 16.0f);
+                globalMeterColor = float3(0.15f, 0.5f, 1.0f);
+            }
+            else if (globalMeterIndex < 8.5f)
+            {
+                globalMeterValue = darkSceneStrength;
+                globalMeterColor = float3(1.0f, 0.55f, 0.1f);
+            }
+            else
+            {
+                globalMeterValue = caveStrength;
+                globalMeterColor = float3(0.7f, 0.2f, 1.0f);
             }
 
             float globalMeterBand = min(
