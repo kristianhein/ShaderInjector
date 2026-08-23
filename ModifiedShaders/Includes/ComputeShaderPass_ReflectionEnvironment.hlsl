@@ -20,7 +20,7 @@
 //indirect diffuse targets for the calibrated environment classes
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.8
-#define INDIRECT_DIFFUSE_SCALE_BEACH 1.5
+#define INDIRECT_DIFFUSE_SCALE_BEACH 1.3
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 2.5
@@ -32,7 +32,7 @@
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 3.0
-#define INDIRECT_DIFFUSE_SCALE_CAVE 4.0
+#define INDIRECT_DIFFUSE_SCALE_CAVE 5.0
 
 //Global fallback-capture chromaticity separates scenes whose luminance overlaps.
 //Measured green/blue ratios: Corel Beach 0.52-0.55, shaded Kalm 0.61-0.64,
@@ -280,7 +280,7 @@
 //default is at 100000 (why? because I modified the SSR shader and now its way higher quality. reflection quality is better + way less specular leaks... and plus the original game reflection cubemaps are really ugly and bad. SSR is the only hope of retaining some dignity for good quality reflections)
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 100000
-#define SSR_CONTRIBUTION_MULTIPLIER 100000.0
+#define SSR_CONTRIBUTION_MULTIPLIER 1
 
 //this is an artistic tweak that darkens only rough cubemap-based reflections (not SSR reflections)
 //this is because a significant amount of specular/light leak comes from these imprecise reflection sources
