@@ -53,6 +53,13 @@
 //[CONFIG DEFAULT]: 2
 #define BLOOM_ADDITIVE_INTENSITY 2.0
 
+//(TEMP DEBUG) left = stock raw-input GT7. Right restores only the positive
+//halo added by the original glare compositor; emissive cores are excluded.
+#define DEBUG_GT7_POSITIVE_GLARE_SPLIT
+
+//Strength of the separately tone-mapped positive glare halo on the right.
+#define DEBUG_GT7_POSITIVE_GLARE_STRENGTH 0.4
+
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - SHARPEN ||||||||||||||||||||||||||||||||||
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - SHARPEN ||||||||||||||||||||||||||||||||||
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - SHARPEN ||||||||||||||||||||||||||||||||||
@@ -1165,6 +1172,10 @@ PixelOutput main(PixelInput input)
 		sceneColor *= ComputeVignette(input.VignetteRayContext.xyz);
 	#endif
 
+	#if defined(DEBUG_GT7_POSITIVE_GLARE_SPLIT)
+		float3 sceneColorBeforeGlare = sceneColor;
+	#endif
+
 	#if defined(BLOOM_ENABLE)
 		sceneColor = ApplyGlare(sceneColor, correctedDestinationUV);
 	#endif
@@ -1172,6 +1183,9 @@ PixelOutput main(PixelInput input)
 	#if defined(AUTO_EXPOSURE)
 		float autoExposure = CalculateAutoExposure();
 		sceneColor *= autoExposure;
+		#if defined(DEBUG_GT7_POSITIVE_GLARE_SPLIT)
+			sceneColorBeforeGlare *= autoExposure;
+		#endif
 	#endif
 
 	//apply any custom artistic adjustments before we tonemap
@@ -1238,6 +1252,15 @@ PixelOutput main(PixelInput input)
 	#else //ORIGINAL GAME TONEMAPPING/COLOR HANDLING
 		float3 tonemapOutput = SampleColorConversionLUTs(sceneColor); //aces fitted baked into LUTs
 		tonemapOutput = SRGBToLinear(tonemapOutput);
+	#endif
+
+	#if defined(DEBUG_GT7_POSITIVE_GLARE_SPLIT)
+		float3 adjustedSceneBeforeGlare = AdjustImage(sceneColorBeforeGlare);
+		float3 positiveGlare = max(sceneColor - adjustedSceneBeforeGlare, 0.0f.xxx);
+		float3 visiblePositiveGlare = ApplyTonemap_AcesFitted(positiveGlare * 2.0f);
+		float3 glareRetainedOutput = tonemapOutput
+			+ visiblePositiveGlare * DEBUG_GT7_POSITIVE_GLARE_STRENGTH;
+		tonemapOutput = destinationUV.x < 0.5f ? tonemapOutput : glareRetainedOutput;
 	#endif
 
 	//uI compositing has to happen in linear
