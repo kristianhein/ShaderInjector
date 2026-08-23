@@ -145,7 +145,7 @@
 //this dramatically improves the lighting quality. adding bounce light from the sun, catching emissives or materials in the games that previously were not emitting light
 //this DOES impact performance quite a bit, needing to sample the color buffer in order to bounce light around
 //and also in its current state, there is no filtering so this can contribute to quite a bit noise in the final image
-#define SSGI_BOUNCE_LIGHT
+// #define SSGI_BOUNCE_LIGHT
 
 //shade half of the expensive SSGI rays each frame and reconstruct the missing half from the two computed neighbors in the same 2x2 pixel quad
 //NOTE: checkerboard rendering is a definite WIN for performance especially at high resolutions, I think it's wise to leave this on even at the expense of quality
@@ -221,7 +221,7 @@
 //default is at 100000 (why? because I modified the SSR shader and now its way higher quality. reflection quality is better + way less specular leaks... and plus the original game reflection cubemaps are really ugly and bad. SSR is the only hope of retaining some dignity for good quality reflections)
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 100000
-#define SSR_CONTRIBUTION_MULTIPLIER 100000.0
+#define SSR_CONTRIBUTION_MULTIPLIER 1
 
 //this is an artistic tweak that darkens only rough cubemap-based reflections (not SSR reflections)
 //this is because a significant amount of specular/light leak comes from these imprecise reflection sources

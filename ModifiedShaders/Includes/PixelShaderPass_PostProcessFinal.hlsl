@@ -65,7 +65,7 @@
 //(AUTO_EXPOSURE) automatic exposure, checks the overall exposure of the final image and adjusts the expousre so that it is not too bright or too dark.
 //unfortunately this is unusally expensive at the moment but because we are kinda limited... we just gotta deal with it for now
 //it's not perfect and will flicker occasionally, brightness changes are instantaneous also
-// #define AUTO_EXPOSURE
+#define AUTO_EXPOSURE
 
 //(AUTO_EXPOSURE) how many horizontal samples we take of the final image to gauge overall image exposure
 //more samples = more stable auto exposure (less flicker) but can be slower
@@ -171,7 +171,7 @@
 //(applied before tonemap)
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.0
-#define ADJUSTMENT_GAMMA 1.0
+#define ADJUSTMENT_GAMMA 1.15
 
 //how much lift the image has, this is a color adjustment that shifts the overall color balance of the image
 //(applied before tonemap)
