@@ -47,7 +47,7 @@
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 2.0
 //[CONFIG RANGE]: [0, 4]
-#define GLARE_TEXTURE_INTENSITY 2.0
+#define GLARE_TEXTURE_INTENSITY 1.5
 
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - SHARPEN ||||||||||||||||||||||||||||||||||
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - SHARPEN ||||||||||||||||||||||||||||||||||
