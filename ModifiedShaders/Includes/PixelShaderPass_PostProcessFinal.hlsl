@@ -171,7 +171,7 @@
 //(applied before tonemap)
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.0
-#define ADJUSTMENT_GAMMA 1.15
+#define ADJUSTMENT_GAMMA 1.00
 
 //how much lift the image has, this is a color adjustment that shifts the overall color balance of the image
 //(applied before tonemap)
@@ -193,6 +193,18 @@
 //I would recomend leaving this on, but this very accurately preserves the original game color grade when applying a new tonemap
 //because in the original game the tonemapping is baked into the LUTs that get used, good for performance but not for flexibility
 #define TONEMAP_PRESERVE_COLOR_GRADE
+
+//(TEMP DEBUG) left = preserved game grade, right = raw HDR. The selected
+//tonemapper is applied to both sides. This isolates changes introduced by the
+//game LUT and inverse-ACES reconstruction.
+// #define DEBUG_TONEMAP_INPUT_SPLIT
+
+//Uses raw HDR as the input to the selected tonemapper for the entire screen,
+//bypassing the game's baked color grade and inverse-ACES reconstruction. This
+//overrides DEBUG_TONEMAP_INPUT_SPLIT when enabled.
+//[CONFIG TYPE]: bool
+//[CONFIG DEFAULT]: false
+#define TONEMAP_RAW_INPUT_FULL_SCREEN
 
 //raw untonemapped framebuffer to screen with srgb conversion
 //(NOTE: only one tonemap can be active at a time)
@@ -1137,128 +1149,55 @@ PixelOutput main(PixelInput input)
 	//|||||||||||||||||||||||||||||||||||||||||||| APPLY TONEMAPPING ||||||||||||||||||||||||||||||||||||||||||||
 	//tonemapping! this is about taking our wide color/brightness range image and compressing it down into SDR/HDR for display
 
-	#if defined(TONEMAP_NONE) 
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-		#else
-			float3 tonemapOutput = sceneColor;
+	float3 tonemapInput = sceneColor;
+	#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
+		tonemapInput = SampleGradedNoTonemapNoSRGB(sceneColor);
+
+		#if defined(TONEMAP_RAW_INPUT_FULL_SCREEN)
+			tonemapInput = sceneColor;
+		#elif defined(DEBUG_TONEMAP_INPUT_SPLIT)
+			tonemapInput = destinationUV.x < 0.5f ? tonemapInput : sceneColor;
 		#endif
+	#endif
+
+	#if defined(TONEMAP_NONE)
+		float3 tonemapOutput = tonemapInput;
 	#elif defined(TONEMAP_GRAN_TURISMO_7)
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_GranTurismo7(tonemapOutput);
-		#else
-			float3 tonemapOutput = ApplyTonemap_GranTurismo7(sceneColor);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_GranTurismo7(tonemapInput);
 	#elif defined(TONEMAP_AGX)
 		//NOTE TO SELF: this * 4 is arbitrary, but I added it so the final tonemapped output
 		//will match the original final game exposure almost 1:1
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_Agx(tonemapOutput * 4.0f);
-		#else
-			float3 tonemapOutput = ApplyTonemap_Agx(sceneColor * 4.0f);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_Agx(tonemapInput * 4.0f);
 	#elif defined(TONEMAP_UCHIMURA)
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_Uchimura(tonemapOutput);
-		#else
-			float3 tonemapOutput = ApplyTonemap_Uchimura(sceneColor);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_Uchimura(tonemapInput);
 	#elif defined(TONEMAP_REINHARD)
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_Reinhard(tonemapOutput);
-		#else
-			float3 tonemapOutput = ApplyTonemap_Reinhard(sceneColor);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_Reinhard(tonemapInput);
 	#elif defined(TONEMAP_REINHARD2)
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_Reinhard2(tonemapOutput);
-		#else
-			float3 tonemapOutput = ApplyTonemap_Reinhard2(sceneColor);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_Reinhard2(tonemapInput);
 	#elif defined(TONEMAP_UNCHARTED2)
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_Uncharted2(tonemapOutput);
-		#else
-			float3 tonemapOutput = ApplyTonemap_Uncharted2(sceneColor);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_Uncharted2(tonemapInput);
 	#elif defined(TONEMAP_ACES)
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_Aces2015(tonemapOutput);
-		#else
-			float3 tonemapOutput = ApplyTonemap_Aces2015(sceneColor);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_Aces2015(tonemapInput);
 	#elif defined(TONEMAP_ACES_FITTED) //NOTE: this appears to be what the game is effectively using
 		//NOTE TO SELF: this * 2 is arbitrary, but I added it so the final tonemapped output
 		//will match the original final game exposure almost 1:1
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_AcesFitted(tonemapOutput * 2.0f);
-		#else
-			float3 tonemapOutput = ApplyTonemap_AcesFitted(sceneColor * 2.0f);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_AcesFitted(tonemapInput * 2.0f);
 	#elif defined(TONEMAP_FILMIC)
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_Filmic(tonemapOutput);
-		#else
-			float3 tonemapOutput = ApplyTonemap_Filmic(sceneColor);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_Filmic(tonemapInput);
 	#elif defined(TONEMAP_UNREAL_3)
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_Unreal3(tonemapOutput);
-		#else
-			float3 tonemapOutput = ApplyTonemap_Unreal3(sceneColor);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_Unreal3(tonemapInput);
 	#elif defined(TONEMAP_KHRONOS_NEUTRAL)
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_KhronosNeutral(tonemapOutput);
-		#else
-			float3 tonemapOutput = ApplyTonemap_KhronosNeutral(sceneColor);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_KhronosNeutral(tonemapInput);
 	#elif defined(TONEMAP_LOTTES)
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_Lottes(tonemapOutput);
-		#else
-			float3 tonemapOutput = ApplyTonemap_Lottes(sceneColor);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_Lottes(tonemapInput);
 	#elif defined(TONEMAP_EXPONENTIAL)
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_Exponential(tonemapOutput);
-		#else
-			float3 tonemapOutput = ApplyTonemap_Exponential(sceneColor);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_Exponential(tonemapInput);
 	#elif defined(TONEMAP_EXPONENTIAL_SQUARED)
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_ExponentialSquared(tonemapOutput);
-		#else
-			float3 tonemapOutput = ApplyTonemap_ExponentialSquared(sceneColor);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_ExponentialSquared(tonemapInput);
 	#elif defined(TONEMAP_MGSV)
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_MGSV(tonemapOutput);
-		#else
-			float3 tonemapOutput = ApplyTonemap_MGSV(sceneColor);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_MGSV(tonemapInput);
 	#elif defined(TONEMAP_TONY_MC_MAP_FACE)
-		#if defined(TONEMAP_PRESERVE_COLOR_GRADE)
-			float3 tonemapOutput = SampleGradedNoTonemapNoSRGB(sceneColor);
-			tonemapOutput = ApplyTonemap_TonyMcMapFaceNeuralNetwork(tonemapOutput);
-		#else
-			float3 tonemapOutput = ApplyTonemap_TonyMcMapFaceNeuralNetwork(sceneColor);
-		#endif
+		float3 tonemapOutput = ApplyTonemap_TonyMcMapFaceNeuralNetwork(tonemapInput);
 	#else //ORIGINAL GAME TONEMAPPING/COLOR HANDLING
 		float3 tonemapOutput = SampleColorConversionLUTs(sceneColor); //aces fitted baked into LUTs
 		tonemapOutput = SRGBToLinear(tonemapOutput);
