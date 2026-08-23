@@ -68,7 +68,7 @@
 //Lower Values: less contrast
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.0
-#define SSAO_POWER 1.0
+#define SSAO_POWER 1.5
 
 //controls how bright the AO term is in ambient light (use in tandem with SSAO_POWER)
 //NOTE: original game SSAO is much weaker than the SSGI AO, if your flipping back and fourth you'll need to readjust the values
@@ -76,7 +76,7 @@
 //Lower Values: darker
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.0
-#define SSAO_BRIGHTNESS 1.0
+#define SSAO_BRIGHTNESS 3.0
 
 //controls for a new SSGI solution, ground-truth visibility bitmask ambient occlusion
 // - intended to replace the games original SSAO
