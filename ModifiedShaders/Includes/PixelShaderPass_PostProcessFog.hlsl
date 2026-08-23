@@ -16,30 +16,12 @@
 //[CONFIG DEFAULT]: 1.0
 #define FOG_DENSITY_NEAR_FIELD_MULTIPLIER 1.0
 
-//Selectively boosts stronger authored volumetric-light scattering while
-//leaving weak ambient fog largely unchanged. This affects lights that inject
-//into the fog volume (currently observed on white/cyan lights), not bloom-only
-//lamps such as the orange fixtures.
-//[CONFIG TYPE]: float
-//[CONFIG DEFAULT]: 0.02
-#define FOG_LIGHT_SCATTERING_BOOST_LOW 0.02
-
-//[CONFIG TYPE]: float
-//[CONFIG DEFAULT]: 0.20
-#define FOG_LIGHT_SCATTERING_BOOST_HIGH 0.20
-
-//Maximum multiplier for strong near- and far-field scattering.
-//[CONFIG TYPE]: float
-//[CONFIG DEFAULT]: 2.0
-//[CONFIG RANGE]: [1, 4]
-#define FOG_LIGHT_SCATTERING_BOOST_MAX 2.0
-
 //disables the far field volumetric fog far away from the player/camera
 // #define DISABLE_FAR_FOG
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.0
-#define FOG_DENSITY_FAR_FIELD_MULTIPLIER 2.0
+#define FOG_DENSITY_FAR_FIELD_MULTIPLIER 1.0
 
 //||||||||||||||||||||||||||||||| CONFIGURATION - PROCEDUAL SKY (EXPERIMENTAL!!!) |||||||||||||||||||||||||||||||
 //||||||||||||||||||||||||||||||| CONFIGURATION - PROCEDUAL SKY (EXPERIMENTAL!!!) |||||||||||||||||||||||||||||||
@@ -1092,23 +1074,6 @@ FApplyFogPSOutput main(FApplyFogPSInput input)
         volumeTransmittance = FogStruct_IntegratedScatteringVolumeBTexture.SampleLevel(View_SharedBilinearClampedSampler, uvw, 0.0).rgb;
 
     }
-
-    float3 unboostedCombinedScattering =
-        volumeTransmittance * farFog.Scattering + volumeScattering;
-    float3 positiveScattering = max(unboostedCombinedScattering, 0.0f.xxx);
-    float scatteringStrength = max(
-        positiveScattering.r,
-        max(positiveScattering.g, positiveScattering.b));
-    float lightScatteringWeight = smoothstep(
-        FOG_LIGHT_SCATTERING_BOOST_LOW,
-        FOG_LIGHT_SCATTERING_BOOST_HIGH,
-        scatteringStrength);
-    float lightScatteringMultiplier = lerp(
-        1.0f,
-        FOG_LIGHT_SCATTERING_BOOST_MAX,
-        lightScatteringWeight);
-    volumeScattering *= lightScatteringMultiplier;
-    farFog.Scattering *= lightScatteringMultiplier;
 
     #if defined(DISABLE_NEAR_FOG)
         volumeScattering = 0.0f;

@@ -53,13 +53,6 @@
 //[CONFIG DEFAULT]: 2
 #define BLOOM_ADDITIVE_INTENSITY 2.0
 
-//(TEMP DEBUG) left = stock raw-input GT7. Right restores only the positive
-//halo added by the original glare compositor; emissive cores are excluded.
-#define DEBUG_GT7_POSITIVE_GLARE_SPLIT
-
-//Strength of the separately tone-mapped positive glare halo on the right.
-#define DEBUG_GT7_POSITIVE_GLARE_STRENGTH 0.4
-
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - SHARPEN ||||||||||||||||||||||||||||||||||
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - SHARPEN ||||||||||||||||||||||||||||||||||
 //|||||||||||||||||||||||||||||||||| CONFIGURATION - SHARPEN ||||||||||||||||||||||||||||||||||
@@ -213,14 +206,8 @@
 //because in the original game the tonemapping is baked into the LUTs that get used, good for performance but not for flexibility
 #define TONEMAP_PRESERVE_COLOR_GRADE
 
-//(TEMP DEBUG) left = preserved game grade, right = raw HDR. The selected
-//tonemapper is applied to both sides. This isolates changes introduced by the
-//game LUT and inverse-ACES reconstruction.
-#define DEBUG_TONEMAP_INPUT_SPLIT
-
 //Uses raw HDR as the input to the selected tonemapper for the entire screen,
 //bypassing the game's baked color grade and inverse-ACES reconstruction. This
-//overrides DEBUG_TONEMAP_INPUT_SPLIT when enabled.
 //[CONFIG TYPE]: bool
 //[CONFIG DEFAULT]: false
 #define TONEMAP_RAW_INPUT_FULL_SCREEN
@@ -1172,10 +1159,6 @@ PixelOutput main(PixelInput input)
 		sceneColor *= ComputeVignette(input.VignetteRayContext.xyz);
 	#endif
 
-	#if defined(DEBUG_GT7_POSITIVE_GLARE_SPLIT)
-		float3 sceneColorBeforeGlare = sceneColor;
-	#endif
-
 	#if defined(BLOOM_ENABLE)
 		sceneColor = ApplyGlare(sceneColor, correctedDestinationUV);
 	#endif
@@ -1183,9 +1166,6 @@ PixelOutput main(PixelInput input)
 	#if defined(AUTO_EXPOSURE)
 		float autoExposure = CalculateAutoExposure();
 		sceneColor *= autoExposure;
-		#if defined(DEBUG_GT7_POSITIVE_GLARE_SPLIT)
-			sceneColorBeforeGlare *= autoExposure;
-		#endif
 	#endif
 
 	//apply any custom artistic adjustments before we tonemap
@@ -1206,8 +1186,6 @@ PixelOutput main(PixelInput input)
 
 		#if defined(TONEMAP_RAW_INPUT_FULL_SCREEN)
 			tonemapInput = sceneColor;
-		#elif defined(DEBUG_TONEMAP_INPUT_SPLIT)
-			tonemapInput = destinationUV.x < 0.5f ? tonemapInput : sceneColor;
 		#endif
 	#endif
 
@@ -1252,15 +1230,6 @@ PixelOutput main(PixelInput input)
 	#else //ORIGINAL GAME TONEMAPPING/COLOR HANDLING
 		float3 tonemapOutput = SampleColorConversionLUTs(sceneColor); //aces fitted baked into LUTs
 		tonemapOutput = SRGBToLinear(tonemapOutput);
-	#endif
-
-	#if defined(DEBUG_GT7_POSITIVE_GLARE_SPLIT)
-		float3 adjustedSceneBeforeGlare = AdjustImage(sceneColorBeforeGlare);
-		float3 positiveGlare = max(sceneColor - adjustedSceneBeforeGlare, 0.0f.xxx);
-		float3 visiblePositiveGlare = ApplyTonemap_AcesFitted(positiveGlare * 2.0f);
-		float3 glareRetainedOutput = tonemapOutput
-			+ visiblePositiveGlare * DEBUG_GT7_POSITIVE_GLARE_STRENGTH;
-		tonemapOutput = destinationUV.x < 0.5f ? tonemapOutput : glareRetainedOutput;
 	#endif
 
 	//uI compositing has to happen in linear
