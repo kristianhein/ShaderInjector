@@ -12,9 +12,12 @@
 //disables the near field volumetric fog (with volumetric rays) close to the player/camera
 // #define DISABLE_NEAR_FOG
 
+//Scales only the near-field integrated volumetric scattering contribution.
+//Fog transmittance and the underlying scene exposure are unchanged.
 //[CONFIG TYPE]: float
-//[CONFIG DEFAULT]: 1.0
-#define FOG_DENSITY_NEAR_FIELD_MULTIPLIER 1.0
+//[CONFIG DEFAULT]: 2.0
+//[CONFIG RANGE]: [0, 4]
+#define FOG_DENSITY_NEAR_FIELD_MULTIPLIER 1.3
 
 //disables the far field volumetric fog far away from the player/camera
 // #define DISABLE_FAR_FOG
