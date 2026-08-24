@@ -20,19 +20,19 @@
 //indirect diffuse targets for the calibrated environment classes
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.8
-#define INDIRECT_DIFFUSE_SCALE_BEACH 1.3
+#define INDIRECT_DIFFUSE_SCALE_BEACH 1.0
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 2.5
-#define INDIRECT_DIFFUSE_SCALE_GRASSLAND 2.1
+#define INDIRECT_DIFFUSE_SCALE_GRASSLAND 1.0
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 2.5
-#define INDIRECT_DIFFUSE_SCALE_MANOR 2.0
+#define INDIRECT_DIFFUSE_SCALE_MANOR 1.0
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 3.0
-#define INDIRECT_DIFFUSE_SCALE_CAVE 3.5
+#define INDIRECT_DIFFUSE_SCALE_CAVE 1.0
 
 //Global fallback-capture chromaticity separates scenes whose luminance overlaps.
 //Measured green/blue ratios: Corel Beach 0.52-0.55, shaded Kalm 0.61-0.64,
@@ -127,7 +127,7 @@
 //Lower Values: less contrast
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.0
-#define SSAO_POWER 1.5
+#define SSAO_POWER 1.3
 
 //controls how bright the AO term is in ambient light (use in tandem with SSAO_POWER)
 //NOTE: original game SSAO is much weaker than the SSGI AO, if your flipping back and fourth you'll need to readjust the values
@@ -135,7 +135,7 @@
 //Lower Values: darker
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 1.0
-#define SSAO_BRIGHTNESS 3.0
+#define SSAO_BRIGHTNESS 2.5
 
 //controls for a new SSGI solution, ground-truth visibility bitmask ambient occlusion
 // - intended to replace the games original SSAO

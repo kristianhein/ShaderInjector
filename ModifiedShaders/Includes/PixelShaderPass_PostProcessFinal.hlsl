@@ -84,7 +84,7 @@
 //only used when AUTO_EXPOSURE_SOURCE_GLARE is enabled, lower this if the image is consistently too dark and raise it if it is consistently too bright
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 6.1
-#define AUTO_EXPOSURE_GLARE_CALIBRATION_EV 6.1
+#define AUTO_EXPOSURE_GLARE_CALIBRATION_EV 2.5
 
 //(AUTO_EXPOSURE) how far below the average a sample is allowed to sit before it stops pulling the exposure down, rejecting outliers like this stops a single dark corner from washing the whole image out
 //[CONFIG TYPE]: float
