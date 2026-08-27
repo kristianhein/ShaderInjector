@@ -16,6 +16,22 @@
 //[CONFIG DEFAULT]: 1.0
 #define FOG_DENSITY_NEAR_FIELD_MULTIPLIER 1.0
 
+//near-field fog density for the calibrated indoor environment classes
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.0
+#define FOG_DENSITY_NEAR_FIELD_MULTIPLIER_MANOR 0.25
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.5
+#define FOG_DENSITY_NEAR_FIELD_MULTIPLIER_CAVE 0.8
+
+//The calibrated Manor measures about -3.5 pre-exposure stops and Mythril Mine
+//about 0 stops. These ranges match the indirect-lighting scene classifier.
+#define FOG_DARK_SCENE_LOW_STOPS (-6.0)
+#define FOG_DARK_SCENE_HIGH_STOPS (-4.0)
+#define FOG_CAVE_PREEXPOSURE_LOW_STOPS (-2.5)
+#define FOG_CAVE_PREEXPOSURE_HIGH_STOPS (-1.0)
+
 //disables the far field volumetric fog far away from the player/camera
 // #define DISABLE_FAR_FOG
 
@@ -1070,8 +1086,24 @@ FApplyFogPSOutput main(FApplyFogPSInput input)
     if (FogStruct_IntegratedScatteringVolumeTextureContext.x > 0.0)
     {
         float3 uvw = ClampIntegratedFogUVW(volumeCoordinate);
-        volumeScattering = View_OneOverPreExposure * FogStruct_IntegratedScatteringVolumeATexture.SampleLevel(View_SharedBilinearClampedSampler, uvw, 0.0).rgb * FOG_DENSITY_NEAR_FIELD_MULTIPLIER;
-        volumeTransmittance = FogStruct_IntegratedScatteringVolumeBTexture.SampleLevel(View_SharedBilinearClampedSampler, uvw, 0.0).rgb;
+        volumeScattering = View_OneOverPreExposure * FogStruct_IntegratedScatteringVolumeATexture.SampleLevel(View_SharedBilinearClampedSampler, uvw, 0.0).rgb;
+        volumeTransmittance = saturate(FogStruct_IntegratedScatteringVolumeBTexture.SampleLevel(View_SharedBilinearClampedSampler, uvw, 0.0).rgb);
+
+        float preExposureStops = log2(max(View_PreExposure, 1.0e-6));
+        float manorStrength = smoothstep(FOG_DARK_SCENE_LOW_STOPS, FOG_DARK_SCENE_HIGH_STOPS, preExposureStops);
+        float caveStrength = smoothstep(FOG_CAVE_PREEXPOSURE_LOW_STOPS, FOG_CAVE_PREEXPOSURE_HIGH_STOPS, preExposureStops);
+        float nonCaveDensity = lerp(FOG_DENSITY_NEAR_FIELD_MULTIPLIER, FOG_DENSITY_NEAR_FIELD_MULTIPLIER_MANOR, manorStrength);
+        float nearFogDensity = max(0.0, lerp(nonCaveDensity, FOG_DENSITY_NEAR_FIELD_MULTIPLIER_CAVE, caveStrength));
+
+        //Scale extinction and in-scattering together. Raising transmittance to
+        //the density power preserves the no-fog and original-fog endpoints.
+        float3 originalExtinction = 1.0 - volumeTransmittance;
+        float3 adjustedTransmittance = pow(max(volumeTransmittance, 1.0e-6), nearFogDensity);
+        float3 scatteringRatio = (1.0 - adjustedTransmittance) / max(originalExtinction, 1.0e-6);
+        float3 scatteringScale = lerp(nearFogDensity.xxx, scatteringRatio, step(1.0e-5, originalExtinction));
+
+        volumeScattering *= scatteringScale;
+        volumeTransmittance = adjustedTransmittance;
     }
 
     #if defined(DISABLE_NEAR_FOG)
