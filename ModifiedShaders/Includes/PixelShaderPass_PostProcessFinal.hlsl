@@ -129,18 +129,43 @@
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.60
 //[CONFIG RANGE]: [0, 1]
-#define AUTO_EXPOSURE_BACKLIGHT_GUARD_START 0.60
+#define AUTO_EXPOSURE_BACKLIGHT_GUARD_START 0.5
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.90
 //[CONFIG RANGE]: [0, 1]
-#define AUTO_EXPOSURE_BACKLIGHT_GUARD_FULL 0.90
+#define AUTO_EXPOSURE_BACKLIGHT_GUARD_FULL 0.8
 
 //(AUTO_EXPOSURE) maximum brightened exposure when the backlight guard is fully active.
 //The ordinary AUTO_EXPOSURE_MAX_EV still applies when the directional light is elsewhere.
 //[CONFIG TYPE]: float
-//[CONFIG DEFAULT]: 0.0
-#define AUTO_EXPOSURE_BACKLIGHT_GUARD_MAX_EV 0.0
+//[CONFIG DEFAULT]: -1.0
+#define AUTO_EXPOSURE_BACKLIGHT_GUARD_MAX_EV 0
+
+//(AUTO_EXPOSURE) enables the display-luminance overbright correction (green debug meter).
+//Comment this out to disable only its explicit EV darkening while keeping the other scene guards active.
+//The debug meter remains visible when disabled.
+//[NO CONFIG]
+#define AUTO_EXPOSURE_OVERBRIGHT_GUARD
+
+//(AUTO_EXPOSURE) explicit darkening, in EV, applied when the base-game output is visibly overbright.
+//0.0 disables this correction; 1.0 subtracts one full exposure stop when the green guard is fully active.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 1.0
+//[CONFIG RANGE]: [0, 4]
+#define AUTO_EXPOSURE_OVERBRIGHT_DARKEN_EV 1.0
+
+//(AUTO_EXPOSURE) average base-game LUT output luminance over which stronger darkening fades in.
+//At START the ordinary strength is used; at FULL the overbright strength is used.
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.35
+//[CONFIG RANGE]: [0, 1]
+#define AUTO_EXPOSURE_OVERBRIGHT_START_LUMA 0.35
+
+//[CONFIG TYPE]: float
+//[CONFIG DEFAULT]: 0.65
+//[CONFIG RANGE]: [0, 1]
+#define AUTO_EXPOSURE_OVERBRIGHT_FULL_LUMA 0.65
 
 //(AUTO_EXPOSURE) strict near-white range in the base game's LUT-tonemapped sRGB output.
 //This is a separate detector for frames that are globally clipped regardless of light direction.
@@ -197,7 +222,7 @@
 //2 = exposure uniformity, computes the exposure both ways in the same frame and shows the difference, dark blue means they agree and red is a seam you would actually see, very slow since it runs the slow metering for every pixel
 //3 = metering weight field, shows what AUTO_EXPOSURE_CENTER_FOCUS is actually weighting
 //4 = sample point positions, tinted by the luminance each point measured
-//5 = thin top overlay: cyan is light-behind-camera alignment, yellow is near-white coverage, orange is combined guard strength
+//5 = thin top overlay: cyan is light alignment, green is metered overbrightness, yellow is near-white coverage, orange is combined guard strength
 //[NO CONFIG]
 #define AUTO_EXPOSURE_DEBUG_MODE 5
 
@@ -923,7 +948,14 @@ float AutoExposureBacklightGuard(float alignment)
     return t * t * (3.0f - 2.0f * t);
 }
 
-float AutoExposureClippedScore(float2 destinationUV)
+float AutoExposureOverbrightGuard(float averageDisplayLuminance)
+{
+    float luminanceRange = max(AUTO_EXPOSURE_OVERBRIGHT_FULL_LUMA - AUTO_EXPOSURE_OVERBRIGHT_START_LUMA, 1.0e-4f);
+    float t = saturate((averageDisplayLuminance - AUTO_EXPOSURE_OVERBRIGHT_START_LUMA) / luminanceRange);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+float2 AutoExposureBaseGameMetrics(float2 destinationUV)
 {
     float2 colorUV = DestinationUVToColorTextureUV(destinationUV);
     float3 sceneColor = min(ColorTexture.SampleLevel(View_SharedBilinearClampedSampler, colorUV, 0.0f).rgb, 64512.0f.xxx);
@@ -931,7 +963,8 @@ float AutoExposureClippedScore(float2 destinationUV)
     float baseGameLuminance = LuminanceRec709(baseGameSRGB);
     float lumaRange = max(AUTO_EXPOSURE_CLIPPED_GUARD_HIGH_LUMA - AUTO_EXPOSURE_CLIPPED_GUARD_LOW_LUMA, 1.0e-4f);
     float t = saturate((baseGameLuminance - AUTO_EXPOSURE_CLIPPED_GUARD_LOW_LUMA) / lumaRange);
-    return t * t * (3.0f - 2.0f * t);
+    float clippedScore = t * t * (3.0f - 2.0f * t);
+    return float2(baseGameLuminance, clippedScore);
 }
 
 float AutoExposureClippedGuard(float clippedCoverage)
@@ -947,7 +980,7 @@ float AutoExposureClippedGuard(float clippedCoverage)
 //for one full screen measurement between them instead of every pixel paying for all of it. Note that we
 //normalise by the summed WEIGHT rather than by the sample count, which means a partially filled wave at the
 //edge of the viewport still produces a correct average from whichever samples it did take.
-float MeasureAutoExposureEV(out float clippedCoverage)
+float MeasureAutoExposureEV(out float clippedCoverage, out float averageDisplayLuminance)
 {
     const uint sampleCount = AUTO_EXPOSURE_SAMPLE_COUNT;
 
@@ -980,6 +1013,7 @@ float MeasureAutoExposureEV(out float clippedCoverage)
 
     #if defined(AUTO_EXPOSURE_SCENE_GUARD_METRICS)
     float laneClippedSum = 0.0f;
+    float laneDisplayLuminanceSum = 0.0f;
     float laneClippedWeight = 0.0f;
     #endif
 
@@ -995,7 +1029,9 @@ float MeasureAutoExposureEV(out float clippedCoverage)
         #if defined(AUTO_EXPOSURE_SCENE_GUARD_METRICS)
             if (j < AUTO_EXPOSURE_CLIPPED_GUARD_SAMPLE_COUNT)
             {
-                laneClippedSum += AutoExposureClippedScore(destinationUV) * weight;
+                float2 baseGameMetrics = AutoExposureBaseGameMetrics(destinationUV);
+                laneDisplayLuminanceSum += baseGameMetrics.x * weight;
+                laneClippedSum += baseGameMetrics.y * weight;
                 laneClippedWeight += weight;
             }
         #endif
@@ -1006,8 +1042,10 @@ float MeasureAutoExposureEV(out float clippedCoverage)
 
     #if defined(AUTO_EXPOSURE_SCENE_GUARD_METRICS)
         float totalClippedWeight = max(WaveActiveSum(laneClippedWeight), 1.0e-5f);
+        averageDisplayLuminance = WaveActiveSum(laneDisplayLuminanceSum) / totalClippedWeight;
         clippedCoverage = WaveActiveSum(laneClippedSum) / totalClippedWeight;
     #else
+        averageDisplayLuminance = 0.0f;
         clippedCoverage = 0.0f;
     #endif
 
@@ -1023,10 +1061,17 @@ float MeasureAutoExposureEV(out float clippedCoverage)
 float CalculateAutoExposure()
 {
     float clippedCoverage;
-    float averageEV = MeasureAutoExposureEV(clippedCoverage);
+    float averageDisplayLuminance;
+    float averageEV = MeasureAutoExposureEV(clippedCoverage, averageDisplayLuminance);
 
     float meteredEV = log2(AUTO_EXPOSURE_MIDDLE_GRAY) - averageEV;
     float exposureEV = meteredEV * AUTO_EXPOSURE_STRENGTH + AUTO_EXPOSURE_COMPENSATION_EV;
+
+    #if defined(AUTO_EXPOSURE_SCENE_GUARDS) && defined(AUTO_EXPOSURE_OVERBRIGHT_GUARD)
+        float overbrightGuard = AutoExposureOverbrightGuard(averageDisplayLuminance);
+        exposureEV -= overbrightGuard * AUTO_EXPOSURE_OVERBRIGHT_DARKEN_EV;
+    #endif
+
     float sceneMaxEV = AUTO_EXPOSURE_MAX_EV;
 
     #if defined(AUTO_EXPOSURE_SCENE_GUARDS)
@@ -1049,7 +1094,7 @@ float CalculateAutoExposure()
 //
 //It is deliberately the slow, obvious version. Only AUTO_EXPOSURE_DEBUG_MODE 2 calls it, and only so that
 //the two results can be differenced inside a single frame.
-float MeasureAutoExposureEVPerPixel(out float clippedCoverage)
+float MeasureAutoExposureEVPerPixel(out float clippedCoverage, out float averageDisplayLuminance)
 {
     const uint sampleCount = AUTO_EXPOSURE_SAMPLE_COUNT;
 
@@ -1075,6 +1120,7 @@ float MeasureAutoExposureEVPerPixel(out float clippedCoverage)
 
     #if defined(AUTO_EXPOSURE_SCENE_GUARD_METRICS)
     float clippedSum = 0.0f;
+    float displayLuminanceSum = 0.0f;
     float clippedWeight = 0.0f;
     #endif
 
@@ -1090,7 +1136,9 @@ float MeasureAutoExposureEVPerPixel(out float clippedCoverage)
         #if defined(AUTO_EXPOSURE_SCENE_GUARD_METRICS)
             if (j < AUTO_EXPOSURE_CLIPPED_GUARD_SAMPLE_COUNT)
             {
-                clippedSum += AutoExposureClippedScore(destinationUV) * weight;
+                float2 baseGameMetrics = AutoExposureBaseGameMetrics(destinationUV);
+                displayLuminanceSum += baseGameMetrics.x * weight;
+                clippedSum += baseGameMetrics.y * weight;
                 clippedWeight += weight;
             }
         #endif
@@ -1099,8 +1147,10 @@ float MeasureAutoExposureEVPerPixel(out float clippedCoverage)
     float averageEV = robustSum / max(robustWeight, 1.0e-5f);
 
     #if defined(AUTO_EXPOSURE_SCENE_GUARD_METRICS)
+        averageDisplayLuminance = displayLuminanceSum / max(clippedWeight, 1.0e-5f);
         clippedCoverage = clippedSum / max(clippedWeight, 1.0e-5f);
     #else
+        averageDisplayLuminance = 0.0f;
         clippedCoverage = 0.0f;
     #endif
 
@@ -1184,7 +1234,9 @@ float3 ApplyAutoExposureDebug(float3 sceneColor, float2 destinationUV)
         //large framerate drop while it is on, that is not what is being measured here.
         float waveClippedCoverage;
         float referenceClippedCoverage;
-        float errorEV = abs(MeasureAutoExposureEV(waveClippedCoverage) - MeasureAutoExposureEVPerPixel(referenceClippedCoverage));
+        float waveDisplayLuminance;
+        float referenceDisplayLuminance;
+        float errorEV = abs(MeasureAutoExposureEV(waveClippedCoverage, waveDisplayLuminance) - MeasureAutoExposureEVPerPixel(referenceClippedCoverage, referenceDisplayLuminance));
 
         return AutoExposureDebugErrorBand(errorEV);
 
@@ -1214,25 +1266,31 @@ float3 ApplyAutoExposureDebug(float3 sceneColor, float2 destinationUV)
 
         //Thin top overlay so the scene remains visible while comparing camera angles.
         //Upper row: directional-light alignment behind the camera, with white START and FULL markers.
-        //Middle row: base-game near-white coverage in yellow, with its own START and FULL markers.
+        //Second row: overbright-meter strength in green.
+        //Third row: base-game near-white coverage in yellow, with its own START and FULL markers.
         //Lower row: strongest active guard in orange, from zero at the left to fully active at the right.
-        const float overlayHeight = 0.09f;
+        const float overlayHeight = 0.12f;
 
         if (destinationUV.y >= overlayHeight)
             return sceneColor;
 
         float alignment = AutoExposureBacklightAlignment();
         float clippedCoverage;
-        MeasureAutoExposureEV(clippedCoverage);
+        float averageDisplayLuminance;
+        MeasureAutoExposureEV(clippedCoverage, averageDisplayLuminance);
         float backlightGuard = AutoExposureBacklightGuard(alignment);
+        float overbrightGuard = 0.0f;
+        #if defined(AUTO_EXPOSURE_OVERBRIGHT_GUARD)
+            overbrightGuard = AutoExposureOverbrightGuard(averageDisplayLuminance);
+        #endif
         float clippedGuard = AutoExposureClippedGuard(clippedCoverage);
-        float guard = max(backlightGuard, clippedGuard);
+        float guard = max(backlightGuard, max(overbrightGuard, clippedGuard));
         float overlayY = destinationUV.y / overlayHeight;
         float markerWidth = max(2.0f * ViewportDestination_ViewportSizeInverse.x, 0.001f);
 
         float3 overlayColor = float3(0.01f, 0.01f, 0.01f);
 
-        if (overlayY < (1.0f / 3.0f))
+        if (overlayY < 0.25f)
         {
             if (destinationUV.x <= alignment)
                 overlayColor = float3(0.0f, 0.8f, 1.0f);
@@ -1243,7 +1301,12 @@ float3 ApplyAutoExposureDebug(float3 sceneColor, float2 destinationUV)
                 overlayColor = 1.0f.xxx;
             }
         }
-        else if (overlayY < (2.0f / 3.0f))
+        else if (overlayY < 0.5f)
+        {
+            if (destinationUV.x <= overbrightGuard)
+                overlayColor = float3(0.0f, 1.0f, 0.2f);
+        }
+        else if (overlayY < 0.75f)
         {
             if (destinationUV.x <= clippedCoverage)
                 overlayColor = float3(1.0f, 0.85f, 0.0f);
@@ -1260,7 +1323,7 @@ float3 ApplyAutoExposureDebug(float3 sceneColor, float2 destinationUV)
         }
 
         //Visible separators even when every reading is zero.
-        if (abs(overlayY - (1.0f / 3.0f)) < 0.017f || abs(overlayY - (2.0f / 3.0f)) < 0.017f)
+        if (abs(overlayY - 0.25f) < 0.013f || abs(overlayY - 0.5f) < 0.013f || abs(overlayY - 0.75f) < 0.013f)
             overlayColor = float3(0.35f, 0.35f, 0.35f);
 
         return overlayColor;
