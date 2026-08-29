@@ -67,6 +67,11 @@
 //note that brightness changes are still instantaneous, there is no adaptation over time yet, that would need state that survives between frames which the injector cannot provide today
 #define AUTO_EXPOSURE
 
+//(AUTO_EXPOSURE) enables the directional backlight and globally clipped-frame guards.
+//Comment this out to use ordinary auto exposure with only AUTO_EXPOSURE_MIN_EV / MAX_EV limits.
+//[NO CONFIG]
+#define AUTO_EXPOSURE_SCENE_GUARDS
+
 //(AUTO_EXPOSURE) meters the glare/bloom buffer instead of the raw scene color, the glare chain is already downsampled and heavily blurred so every sample is an area average instead of a single point
 //this is what cuts down most of the flicker, point samples of the raw framebuffer land on different scene content every time the camera moves but averaged samples do not
 //turn this off to meter the raw scene color instead, useful if the game's bloom is ever unavailable
@@ -842,6 +847,11 @@ float ComputeVignette(float3 vignetteRayContext)
 
 #if defined(AUTO_EXPOSURE)
 
+//Keep detector metrics alive for debug mode 5 even when their exposure correction is disabled.
+#if defined(AUTO_EXPOSURE_SCENE_GUARDS) || (defined(AUTO_EXPOSURE_DEBUG) && AUTO_EXPOSURE_DEBUG_MODE == 5)
+    #define AUTO_EXPOSURE_SCENE_GUARD_METRICS
+#endif
+
 //Defined later with the original-game tonemapping functions. The clipped-frame guard evaluates that exact
 //output so it measures display clipping rather than guessing from the pre-exposed scene or glare buffers.
 float3 SampleColorConversionLUTs(float3 linearSceneColor);
@@ -967,8 +977,11 @@ float MeasureAutoExposureEV(out float clippedCoverage)
 
     float laneRobustSum = 0.0f;
     float laneRobustWeight = 0.0f;
+
+    #if defined(AUTO_EXPOSURE_SCENE_GUARD_METRICS)
     float laneClippedSum = 0.0f;
     float laneClippedWeight = 0.0f;
+    #endif
 
     for (uint j = laneIndex; j < sampleCount; j += laneCount)
     {
@@ -979,17 +992,24 @@ float MeasureAutoExposureEV(out float clippedCoverage)
         laneRobustSum += clamp(sampleEV, rejectLowEV, rejectHighEV) * weight;
         laneRobustWeight += weight;
 
-        if (j < AUTO_EXPOSURE_CLIPPED_GUARD_SAMPLE_COUNT)
-        {
-            laneClippedSum += AutoExposureClippedScore(destinationUV) * weight;
-            laneClippedWeight += weight;
-        }
+        #if defined(AUTO_EXPOSURE_SCENE_GUARD_METRICS)
+            if (j < AUTO_EXPOSURE_CLIPPED_GUARD_SAMPLE_COUNT)
+            {
+                laneClippedSum += AutoExposureClippedScore(destinationUV) * weight;
+                laneClippedWeight += weight;
+            }
+        #endif
     }
 
     float totalRobustWeight = max(WaveActiveSum(laneRobustWeight), 1.0e-5f);
-    float totalClippedWeight = max(WaveActiveSum(laneClippedWeight), 1.0e-5f);
     float averageEV = WaveActiveSum(laneRobustSum) / totalRobustWeight;
-    clippedCoverage = WaveActiveSum(laneClippedSum) / totalClippedWeight;
+
+    #if defined(AUTO_EXPOSURE_SCENE_GUARD_METRICS)
+        float totalClippedWeight = max(WaveActiveSum(laneClippedWeight), 1.0e-5f);
+        clippedCoverage = WaveActiveSum(laneClippedSum) / totalClippedWeight;
+    #else
+        clippedCoverage = 0.0f;
+    #endif
 
     #if defined(AUTO_EXPOSURE_SOURCE_GLARE)
         //convert glare brightness back into scene brightness
@@ -1007,11 +1027,15 @@ float CalculateAutoExposure()
 
     float meteredEV = log2(AUTO_EXPOSURE_MIDDLE_GRAY) - averageEV;
     float exposureEV = meteredEV * AUTO_EXPOSURE_STRENGTH + AUTO_EXPOSURE_COMPENSATION_EV;
-    float backlightGuard = AutoExposureBacklightGuard(AutoExposureBacklightAlignment());
-    float clippedGuard = AutoExposureClippedGuard(clippedCoverage);
-    float backlightMaxEV = lerp(AUTO_EXPOSURE_MAX_EV, AUTO_EXPOSURE_BACKLIGHT_GUARD_MAX_EV, backlightGuard);
-    float clippedMaxEV = lerp(AUTO_EXPOSURE_MAX_EV, AUTO_EXPOSURE_CLIPPED_GUARD_MAX_EV, clippedGuard);
-    float sceneMaxEV = min(backlightMaxEV, clippedMaxEV);
+    float sceneMaxEV = AUTO_EXPOSURE_MAX_EV;
+
+    #if defined(AUTO_EXPOSURE_SCENE_GUARDS)
+        float backlightGuard = AutoExposureBacklightGuard(AutoExposureBacklightAlignment());
+        float clippedGuard = AutoExposureClippedGuard(clippedCoverage);
+        float backlightMaxEV = lerp(AUTO_EXPOSURE_MAX_EV, AUTO_EXPOSURE_BACKLIGHT_GUARD_MAX_EV, backlightGuard);
+        float clippedMaxEV = lerp(AUTO_EXPOSURE_MAX_EV, AUTO_EXPOSURE_CLIPPED_GUARD_MAX_EV, clippedGuard);
+        sceneMaxEV = min(backlightMaxEV, clippedMaxEV);
+    #endif
 
     exposureEV = clamp(exposureEV, AUTO_EXPOSURE_MIN_EV, sceneMaxEV);
 
@@ -1048,8 +1072,11 @@ float MeasureAutoExposureEVPerPixel(out float clippedCoverage)
 
     float robustSum = 0.0f;
     float robustWeight = 0.0f;
+
+    #if defined(AUTO_EXPOSURE_SCENE_GUARD_METRICS)
     float clippedSum = 0.0f;
     float clippedWeight = 0.0f;
+    #endif
 
     for (uint j = 0; j < sampleCount; ++j)
     {
@@ -1060,15 +1087,22 @@ float MeasureAutoExposureEVPerPixel(out float clippedCoverage)
         robustSum += clamp(sampleEV, rejectLowEV, rejectHighEV) * weight;
         robustWeight += weight;
 
-        if (j < AUTO_EXPOSURE_CLIPPED_GUARD_SAMPLE_COUNT)
-        {
-            clippedSum += AutoExposureClippedScore(destinationUV) * weight;
-            clippedWeight += weight;
-        }
+        #if defined(AUTO_EXPOSURE_SCENE_GUARD_METRICS)
+            if (j < AUTO_EXPOSURE_CLIPPED_GUARD_SAMPLE_COUNT)
+            {
+                clippedSum += AutoExposureClippedScore(destinationUV) * weight;
+                clippedWeight += weight;
+            }
+        #endif
     }
 
     float averageEV = robustSum / max(robustWeight, 1.0e-5f);
-    clippedCoverage = clippedSum / max(clippedWeight, 1.0e-5f);
+
+    #if defined(AUTO_EXPOSURE_SCENE_GUARD_METRICS)
+        clippedCoverage = clippedSum / max(clippedWeight, 1.0e-5f);
+    #else
+        clippedCoverage = 0.0f;
+    #endif
 
     #if defined(AUTO_EXPOSURE_SOURCE_GLARE)
         averageEV += AUTO_EXPOSURE_GLARE_CALIBRATION_EV;
@@ -1237,6 +1271,10 @@ float3 ApplyAutoExposureDebug(float3 sceneColor, float2 destinationUV)
 }
 
 #endif //AUTO_EXPOSURE_DEBUG
+
+#if defined(AUTO_EXPOSURE_SCENE_GUARD_METRICS)
+    #undef AUTO_EXPOSURE_SCENE_GUARD_METRICS
+#endif
 
 #endif //AUTO_EXPOSURE
 
