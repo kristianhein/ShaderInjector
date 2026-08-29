@@ -86,7 +86,7 @@
 #define AUTO_EXPOSURE_SAMPLE_COUNT 256
 
 //(AUTO_EXPOSURE) calibration offset in EV that converts glare brightness back into scene brightness, the glare chain sits at roughly 1/15th of scene brightness and log2(15) is about 3.9
-//only used when AUTO_EXPOSURE_SOURCE_GLARE is enabled, lower this if the image is consistently too dark and raise it if it is consistently too bright
+//used by glare-source exposure metering and by the stable scene-guard metrics; lower this if the image is consistently too dark and raise it if it is consistently too bright
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 6.1
 #define AUTO_EXPOSURE_GLARE_CALIBRATION_EV 2.5
@@ -146,7 +146,7 @@
 //Comment this out to disable only its explicit EV darkening while keeping the other scene guards active.
 //The debug meter remains visible when disabled.
 //[NO CONFIG]
-#define AUTO_EXPOSURE_OVERBRIGHT_GUARD
+// #define AUTO_EXPOSURE_OVERBRIGHT_GUARD
 
 //(AUTO_EXPOSURE) explicit darkening, in EV, applied when the base-game output is visibly overbright.
 //0.0 disables this correction; 1.0 subtracts one full exposure stop when the green guard is fully active.
@@ -178,11 +178,6 @@
 //[CONFIG DEFAULT]: 0.98
 //[CONFIG RANGE]: [0, 1]
 #define AUTO_EXPOSURE_CLIPPED_GUARD_HIGH_LUMA 0.98
-
-//[CONFIG TYPE]: int
-//[CONFIG DEFAULT]: 64
-//[CONFIG RANGE]: [16, 256]
-#define AUTO_EXPOSURE_CLIPPED_GUARD_SAMPLE_COUNT 64
 
 //(AUTO_EXPOSURE) near-white screen coverage over which the clipped-frame guard fades in.
 //[CONFIG TYPE]: float
@@ -955,11 +950,26 @@ float AutoExposureOverbrightGuard(float averageDisplayLuminance)
     return t * t * (3.0f - 2.0f * t);
 }
 
-float2 AutoExposureBaseGameMetrics(float2 destinationUV)
+//Approximates the base game's displayed result from an area-averaged glare sample. Using the blurred
+//glare chain prevents camera motion from making sparse mip-0 point samples jump between unrelated objects.
+//Clamp the sample in the same robust EV window as the main meter before applying the game LUT, so isolated
+//sun, specular and emissive samples cannot make either scene guard change abruptly.
+float2 AutoExposureBaseGameMetrics(float2 destinationUV, float rejectLowEV, float rejectHighEV)
 {
-    float2 colorUV = DestinationUVToColorTextureUV(destinationUV);
-    float3 sceneColor = min(ColorTexture.SampleLevel(View_SharedBilinearClampedSampler, colorUV, 0.0f).rgb, 64512.0f.xxx);
-    float3 baseGameSRGB = saturate(SampleColorConversionLUTs(max(sceneColor, 0.0f.xxx)));
+    float2 glareUV = DestinationUVToGlareTextureUV(destinationUV);
+    float3 glareColor = max(GlareTexture.SampleLevel(View_SharedBilinearClampedSampler, glareUV, 0.0f).rgb, 0.0f.xxx);
+    float glareEV = log2(max(LuminanceRec709(glareColor), 1.0e-5f));
+
+    //The rejection window is normally already in glare EV. Keep the guard correct if raw-color
+    //exposure metering is selected by translating its scene-EV window back onto the glare scale.
+    #if !defined(AUTO_EXPOSURE_SOURCE_GLARE)
+        rejectLowEV -= AUTO_EXPOSURE_GLARE_CALIBRATION_EV;
+        rejectHighEV -= AUTO_EXPOSURE_GLARE_CALIBRATION_EV;
+    #endif
+
+    float robustEV = clamp(glareEV, rejectLowEV, rejectHighEV);
+    float3 stableSceneColor = min(glareColor * exp2(AUTO_EXPOSURE_GLARE_CALIBRATION_EV + robustEV - glareEV), 64512.0f.xxx);
+    float3 baseGameSRGB = saturate(SampleColorConversionLUTs(stableSceneColor));
     float baseGameLuminance = LuminanceRec709(baseGameSRGB);
     float lumaRange = max(AUTO_EXPOSURE_CLIPPED_GUARD_HIGH_LUMA - AUTO_EXPOSURE_CLIPPED_GUARD_LOW_LUMA, 1.0e-4f);
     float t = saturate((baseGameLuminance - AUTO_EXPOSURE_CLIPPED_GUARD_LOW_LUMA) / lumaRange);
@@ -1027,13 +1037,10 @@ float MeasureAutoExposureEV(out float clippedCoverage, out float averageDisplayL
         laneRobustWeight += weight;
 
         #if defined(AUTO_EXPOSURE_SCENE_GUARD_METRICS)
-            if (j < AUTO_EXPOSURE_CLIPPED_GUARD_SAMPLE_COUNT)
-            {
-                float2 baseGameMetrics = AutoExposureBaseGameMetrics(destinationUV);
-                laneDisplayLuminanceSum += baseGameMetrics.x * weight;
-                laneClippedSum += baseGameMetrics.y * weight;
-                laneClippedWeight += weight;
-            }
+            float2 baseGameMetrics = AutoExposureBaseGameMetrics(destinationUV, rejectLowEV, rejectHighEV);
+            laneDisplayLuminanceSum += baseGameMetrics.x * weight;
+            laneClippedSum += baseGameMetrics.y * weight;
+            laneClippedWeight += weight;
         #endif
     }
 
@@ -1134,13 +1141,10 @@ float MeasureAutoExposureEVPerPixel(out float clippedCoverage, out float average
         robustWeight += weight;
 
         #if defined(AUTO_EXPOSURE_SCENE_GUARD_METRICS)
-            if (j < AUTO_EXPOSURE_CLIPPED_GUARD_SAMPLE_COUNT)
-            {
-                float2 baseGameMetrics = AutoExposureBaseGameMetrics(destinationUV);
-                displayLuminanceSum += baseGameMetrics.x * weight;
-                clippedSum += baseGameMetrics.y * weight;
-                clippedWeight += weight;
-            }
+            float2 baseGameMetrics = AutoExposureBaseGameMetrics(destinationUV, rejectLowEV, rejectHighEV);
+            displayLuminanceSum += baseGameMetrics.x * weight;
+            clippedSum += baseGameMetrics.y * weight;
+            clippedWeight += weight;
         #endif
     }
 
