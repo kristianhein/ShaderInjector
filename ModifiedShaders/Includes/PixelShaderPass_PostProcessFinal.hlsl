@@ -90,14 +90,14 @@
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 3.0
 //[CONFIG RANGE]: [0, 16]
-#define AUTO_EXPOSURE_REJECT_LOW_EV -1.5
+#define AUTO_EXPOSURE_REJECT_LOW_EV 3
 
 //(AUTO_EXPOSURE) how far above the average a sample is allowed to sit before it stops pulling the exposure up, this is deliberately tighter than the low side
 //the sun, speculars and emissives are the main cause of sudden exposure jumps, so bright outliers get clamped harder than dark ones
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 2.0
 //[CONFIG RANGE]: [0, 16]
-#define AUTO_EXPOSURE_REJECT_HIGH_EV 0.0
+#define AUTO_EXPOSURE_REJECT_HIGH_EV 2
 
 //(AUTO_EXPOSURE) this is the middle gray value that the auto exposure will try to achieve, this is a standard value for middle gray
 //[CONFIG TYPE]: float
