@@ -23,7 +23,7 @@
 
 //[CONFIG TYPE]: float
 //[CONFIG DEFAULT]: 0.5
-#define FOG_DENSITY_NEAR_FIELD_MULTIPLIER_CAVE 0.8
+#define FOG_DENSITY_NEAR_FIELD_MULTIPLIER_CAVE 0.7
 
 //The calibrated Manor measures about -3.5 pre-exposure stops and Mythril Mine
 //about 0 stops. These ranges match the indirect-lighting scene classifier.
