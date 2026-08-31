@@ -208,7 +208,7 @@
 
 //shade half of the expensive SSGI rays each frame and reconstruct the missing half from the two computed neighbors in the same 2x2 pixel quad
 //NOTE: checkerboard rendering is a definite WIN for performance especially at high resolutions, I think it's wise to leave this on even at the expense of quality
-// #define SSGI_CHECKERBOARD
+#define SSGI_CHECKERBOARD
 
 //(SSGI_CHECKERBOARD ONLY) reconstruct the missing half of the checkerboard SSGI rays from the two computed neighbors in the same 2x2 pixel quad
 #define SSGI_CHECKERBOARD_QUAD_RECONSTRUCTION
